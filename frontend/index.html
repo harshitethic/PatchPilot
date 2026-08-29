@@ -6,75 +6,19 @@
 <title>PatchPilot — AI Developer Agent</title>
 <style>
 :root{
-  --bg:#03110d;
-  --bg-2:#061914;
-  --panel:rgba(5,25,19,.72);
-  --panel-2:rgba(7,31,24,.56);
-  --line:rgba(75,214,166,.16);
-  --line-strong:rgba(75,214,166,.28);
-  --text:#effcf6;
-  --muted:#8fa79e;
-  --muted-2:#6f877f;
-  --accent:#16e0ad;
-  --accent-2:#55f1c8;
-  --danger:#ff8d96;
-  --shadow:0 30px 100px rgba(0,0,0,.28);
-  font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-  color-scheme:dark;
+  --bg:#03110d;--bg-2:#061914;--panel:rgba(5,25,19,.72);--line:rgba(75,214,166,.16);--line-strong:rgba(75,214,166,.28);
+  --text:#effcf6;--muted:#8fa79e;--muted-2:#6f877f;--accent:#16e0ad;--accent-2:#55f1c8;--danger:#ff8d96;
+  --shadow:0 30px 100px rgba(0,0,0,.28);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color-scheme:dark;
 }
-*{box-sizing:border-box}
-html{scroll-behavior:smooth}
-body{
-  margin:0;
-  color:var(--text);
-  background:
-    radial-gradient(circle at 18% 2%,rgba(18,132,99,.20),transparent 28%),
-    radial-gradient(circle at 84% 18%,rgba(16,105,81,.14),transparent 25%),
-    linear-gradient(180deg,#04110d 0%,#020a08 100%);
-  min-height:100vh;
-  overflow-x:hidden;
+html[data-theme="light"]{
+  --bg:#f4faf7;--bg-2:#eaf5f0;--panel:rgba(255,255,255,.84);--line:rgba(13,95,72,.14);--line-strong:rgba(13,95,72,.26);
+  --text:#10231d;--muted:#5c746b;--muted-2:#748b82;--accent:#0ca77f;--accent-2:#078b6a;--danger:#c74455;
+  --shadow:0 24px 70px rgba(18,59,48,.12);color-scheme:light;
 }
-body:before{
-  content:"";
-  position:fixed;
-  inset:0;
-  pointer-events:none;
-  opacity:.18;
-  background-image:linear-gradient(rgba(255,255,255,.018) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.018) 1px,transparent 1px);
-  background-size:48px 48px;
-  mask-image:linear-gradient(to bottom,black,transparent 70%);
-}
-.wrap{max-width:1240px;margin:0 auto;padding:18px 26px 84px;position:relative}
-.nav{
-  height:58px;
-  border:1px solid var(--line);
-  background:rgba(3,20,15,.60);
-  backdrop-filter:blur(18px);
-  border-radius:18px;
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  padding:0 12px 0 14px;
-  box-shadow:0 16px 48px rgba(0,0,0,.18);
-}
-.brand-wrap{display:flex;align-items:center;gap:11px;min-width:180px}
-.brand-mark{width:34px;height:34px;border:1px solid var(--accent);border-radius:10px;display:grid;place-items:center;color:var(--accent);font-size:12px;font-weight:900;letter-spacing:-.06em}
-.brand{font-size:16px;font-weight:850;letter-spacing:.04em}.brand span{color:var(--accent)}
-.nav-links{display:flex;gap:28px;color:var(--muted);font-size:13px}.nav-links a{color:inherit;text-decoration:none}.nav-links a:hover{color:var(--text)}
-.nav-actions{display:flex;gap:8px}.nav-chip{border:1px solid var(--line);color:var(--muted);background:rgba(4,24,18,.55);padding:9px 11px;border-radius:11px;font-size:12px;font-weight:750;text-decoration:none}.nav-cta{color:#001d16;background:var(--accent);border-color:var(--accent);}
-.hero{padding:78px 28px 34px;position:relative}.eyebrow{display:inline-flex;align-items:center;gap:8px;color:#99b2a9;font-size:11px;letter-spacing:.20em;text-transform:uppercase;font-weight:750}.dot{width:7px;height:7px;background:var(--accent);border-radius:50%;box-shadow:0 0 18px rgba(22,224,173,.8)}
-h1{font-size:clamp(58px,8vw,108px);line-height:.92;letter-spacing:-.075em;margin:20px 0 24px;max-width:960px;font-weight:800}.grad{color:transparent;background:linear-gradient(90deg,var(--accent),#c0ffef 90%);-webkit-background-clip:text;background-clip:text}
-.sub{color:#a0b3ac;font-size:18px;line-height:1.65;max-width:780px;margin:0}.hero-meta{display:flex;gap:9px;flex-wrap:wrap;margin-top:20px}.meta{border:1px solid var(--line);background:rgba(5,28,21,.42);padding:8px 10px;border-radius:999px;color:#87a098;font-size:11px;text-transform:uppercase;letter-spacing:.12em}
-.grid{display:grid;grid-template-columns:420px 1fr;gap:18px;margin:32px 0 0}.card{border:1px solid var(--line);background:linear-gradient(180deg,rgba(6,30,23,.78),rgba(3,17,13,.74));border-radius:22px;padding:22px;box-shadow:var(--shadow);position:relative;overflow:hidden}.card:before{content:"";position:absolute;inset:0 0 auto 0;height:1px;background:linear-gradient(90deg,transparent,var(--line-strong),transparent)}
-.card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.card-title{font-size:12px;text-transform:uppercase;letter-spacing:.16em;color:#8fa89f;font-weight:800}.ready{color:var(--accent);font-size:10px;letter-spacing:.12em;text-transform:uppercase}
-label{display:block;color:#9db0a8;font-size:12px;margin:16px 0 8px;font-weight:650}input,textarea,select{width:100%;border:1px solid rgba(81,168,142,.20);background:rgba(1,10,8,.70);color:var(--text);border-radius:13px;padding:13px 14px;outline:none;font:inherit;transition:.18s border-color,.18s box-shadow,.18s background}input:focus,textarea:focus,select:focus{border-color:rgba(22,224,173,.55);box-shadow:0 0 0 4px rgba(22,224,173,.08);background:rgba(2,14,11,.88)}textarea{min-height:132px;resize:vertical;line-height:1.45}.row{display:grid;grid-template-columns:1fr 1.1fr;gap:12px}
-button{border:1px solid var(--accent);border-radius:13px;padding:13px 16px;background:var(--accent);color:#022118;font-weight:900;cursor:pointer;margin-top:18px;width:100%;transition:.18s transform,.18s box-shadow,.18s opacity}button:hover{transform:translateY(-1px);box-shadow:0 10px 28px rgba(22,224,173,.18)}button:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
-.status{min-height:22px;color:#79948b;font-size:12px;margin-top:11px}.workspace{font-size:11px;color:#728b83;margin-top:9px}.ok{color:#6ef0c2}.bad{color:var(--danger)}
-.result-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.summary{font-size:18px;line-height:1.4;color:#ecf7f3}.result-badge{font-size:10px;border:1px solid var(--line);border-radius:999px;padding:7px 9px;color:#83a198;white-space:nowrap}
-.section{margin-top:24px}.section-label{color:#769088;font-size:10px;text-transform:uppercase;letter-spacing:.18em;font-weight:800;margin-bottom:8px}.step{padding:11px 0;border-bottom:1px solid rgba(75,214,166,.08);color:#d2e1dc;font-size:14px}.step:last-child{border-bottom:0}.pill{display:inline-block;padding:6px 9px;border:1px solid var(--line);border-radius:999px;margin:4px 6px 0 0;color:#b4c9c1;font-size:11px;background:rgba(4,25,19,.44)}pre{white-space:pre-wrap;word-break:break-word;color:#aec3bb;line-height:1.6;max-height:500px;overflow:auto;background:rgba(1,9,7,.42);border:1px solid rgba(75,214,166,.08);border-radius:14px;padding:14px}.diff{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}.codebox{margin-top:10px}
-.footer{display:flex;justify-content:space-between;gap:16px;color:#5e766e;font-size:11px;margin:18px 6px 0}.footer a{color:#7f978f;text-decoration:none}
-@media(max-width:960px){.nav-links{display:none}.grid{grid-template-columns:1fr}.hero{padding-left:12px;padding-right:12px}.wrap{padding-left:14px;padding-right:14px}}
-@media(max-width:560px){.nav{height:auto;min-height:58px}.nav-actions .nav-chip:first-child{display:none}.hero{padding-top:56px}h1{font-size:54px}.sub{font-size:16px}.row{grid-template-columns:1fr}.card{padding:18px}.footer{flex-direction:column}}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;color:var(--text);background:radial-gradient(circle at 18% 2%,rgba(18,132,99,.20),transparent 28%),radial-gradient(circle at 84% 18%,rgba(16,105,81,.14),transparent 25%),linear-gradient(180deg,var(--bg) 0%,var(--bg-2) 100%);min-height:100vh;overflow-x:hidden;transition:background .2s,color .2s}body:before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.14;background-image:linear-gradient(rgba(255,255,255,.018) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.018) 1px,transparent 1px);background-size:48px 48px;mask-image:linear-gradient(to bottom,black,transparent 70%)}
+.wrap{max-width:1240px;margin:0 auto;padding:18px 26px 84px;position:relative}.nav{height:58px;border:1px solid var(--line);background:var(--panel);backdrop-filter:blur(18px);border-radius:18px;display:flex;align-items:center;justify-content:space-between;padding:0 12px 0 14px;box-shadow:0 16px 48px rgba(0,0,0,.12)}.brand-wrap{display:flex;align-items:center;gap:11px;min-width:180px}.brand-mark{width:34px;height:34px;border:1px solid var(--accent);border-radius:10px;display:grid;place-items:center;color:var(--accent);font-size:12px;font-weight:900;letter-spacing:-.06em}.brand{font-size:16px;font-weight:850;letter-spacing:.04em}.brand span{color:var(--accent)}.nav-links{display:flex;gap:28px;color:var(--muted);font-size:13px}.nav-links a{color:inherit;text-decoration:none}.nav-links a:hover{color:var(--text)}.nav-actions{display:flex;gap:8px;align-items:center}.nav-chip{border:1px solid var(--line);color:var(--muted);background:rgba(4,24,18,.25);padding:9px 11px;border-radius:11px;font-size:12px;font-weight:750;text-decoration:none}.nav-cta{color:#001d16;background:var(--accent);border-color:var(--accent)}.theme-toggle{display:flex;align-items:center;gap:7px;border:1px solid var(--line);color:var(--muted);background:rgba(4,24,18,.18);padding:8px 10px;border-radius:11px;font-size:12px;font-weight:800;cursor:pointer}.theme-toggle svg{width:15px;height:15px}
+.hero{padding:78px 28px 34px;position:relative}.eyebrow{display:inline-flex;align-items:center;gap:8px;color:var(--muted);font-size:11px;letter-spacing:.20em;text-transform:uppercase;font-weight:750}.dot{width:7px;height:7px;background:var(--accent);border-radius:50%;box-shadow:0 0 18px rgba(22,224,173,.8)}h1{font-size:clamp(58px,8vw,108px);line-height:.92;letter-spacing:-.075em;margin:20px 0 24px;max-width:960px;font-weight:800}.grad{color:transparent;background:linear-gradient(90deg,var(--accent),#c0ffef 90%);-webkit-background-clip:text;background-clip:text}.sub{color:var(--muted);font-size:18px;line-height:1.65;max-width:780px;margin:0}.hero-meta{display:flex;gap:9px;flex-wrap:wrap;margin-top:20px}.meta{border:1px solid var(--line);background:rgba(5,28,21,.18);padding:8px 10px;border-radius:999px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.12em}
+.grid{display:grid;grid-template-columns:420px 1fr;gap:18px;margin:32px 0 0}.card{border:1px solid var(--line);background:var(--panel);border-radius:22px;padding:22px;box-shadow:var(--shadow);position:relative;overflow:hidden}.card:before{content:"";position:absolute;inset:0 0 auto 0;height:1px;background:linear-gradient(90deg,transparent,var(--line-strong),transparent)}.card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.card-title{font-size:12px;text-transform:uppercase;letter-spacing:.16em;color:var(--muted);font-weight:800}.ready{color:var(--accent);font-size:10px;letter-spacing:.12em;text-transform:uppercase}label{display:block;color:var(--muted);font-size:12px;margin:16px 0 8px;font-weight:650}input,textarea,select{width:100%;border:1px solid var(--line);background:rgba(1,10,8,.28);color:var(--text);border-radius:13px;padding:13px 14px;outline:none;font:inherit;transition:.18s border-color,.18s box-shadow,.18s background}html[data-theme="light"] input,html[data-theme="light"] textarea,html[data-theme="light"] select{background:rgba(255,255,255,.76)}input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 4px rgba(22,224,173,.08);background:rgba(2,14,11,.40)}html[data-theme="light"] input:focus,html[data-theme="light"] textarea:focus,html[data-theme="light"] select:focus{background:#fff}textarea{min-height:132px;resize:vertical;line-height:1.45}.row{display:grid;grid-template-columns:1fr 1.1fr;gap:12px}button{border:1px solid var(--accent);border-radius:13px;padding:13px 16px;background:var(--accent);color:#022118;font-weight:900;cursor:pointer;margin-top:18px;width:100%;transition:.18s transform,.18s box-shadow,.18s opacity}button:hover{transform:translateY(-1px);box-shadow:0 10px 28px rgba(22,224,173,.18)}button:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}.status{min-height:22px;color:var(--muted);font-size:12px;margin-top:11px}.workspace{font-size:11px;color:var(--muted-2);margin-top:9px}.ok{color:var(--accent)}.bad{color:var(--danger)}.result-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.summary{font-size:18px;line-height:1.4;color:var(--text)}.result-badge{font-size:10px;border:1px solid var(--line);border-radius:999px;padding:7px 9px;color:var(--muted);white-space:nowrap}.section{margin-top:24px}.section-label{color:var(--muted-2);font-size:10px;text-transform:uppercase;letter-spacing:.18em;font-weight:800;margin-bottom:8px}.step{padding:11px 0;border-bottom:1px solid var(--line);color:var(--text);font-size:14px}.step:last-child{border-bottom:0}.pill{display:inline-block;padding:6px 9px;border:1px solid var(--line);border-radius:999px;margin:4px 6px 0 0;color:var(--muted);font-size:11px;background:rgba(4,25,19,.16)}pre{white-space:pre-wrap;word-break:break-word;color:var(--muted);line-height:1.6;max-height:500px;overflow:auto;background:rgba(1,9,7,.20);border:1px solid var(--line);border-radius:14px;padding:14px}.diff{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}.codebox{margin-top:10px}.footer{display:flex;justify-content:space-between;gap:16px;color:var(--muted-2);font-size:11px;margin:18px 6px 0}.footer a{color:var(--muted);text-decoration:none}@media(max-width:960px){.nav-links{display:none}.grid{grid-template-columns:1fr}.hero{padding-left:12px;padding-right:12px}.wrap{padding-left:14px;padding-right:14px}}@media(max-width:560px){.nav{height:auto;min-height:58px}.nav-actions .nav-chip:first-child,.theme-label{display:none}.hero{padding-top:56px}h1{font-size:54px}.sub{font-size:16px}.row{grid-template-columns:1fr}.card{padding:18px}.footer{flex-direction:column}}
 </style>
 </head>
 <body>
@@ -82,63 +26,20 @@ button{border:1px solid var(--accent);border-radius:13px;padding:13px 16px;backg
   <div class="nav">
     <div class="brand-wrap"><div class="brand-mark">PP</div><div class="brand">PATCH<span>PILOT</span></div></div>
     <div class="nav-links"><a href="#agent">Agent</a><a href="#result">How it works</a><a href="#footer">Open source</a></div>
-    <div class="nav-actions"><a class="nav-chip" href="https://github.com/harshitethic" target="_blank" rel="noreferrer">GH</a><a class="nav-chip nav-cta" href="https://github.com/harshitethic" target="_blank" rel="noreferrer">Built by HarshitEthic ↗</a></div>
+    <div class="nav-actions"><a class="nav-chip" href="https://github.com/harshitethic" target="_blank" rel="noreferrer">GH</a><button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" aria-label="Toggle light and dark mode"><span id="themeIcon">☼</span><span class="theme-label" id="themeText">Light mode</span></button><a class="nav-chip nav-cta" href="https://github.com/harshitethic" target="_blank" rel="noreferrer">Built by HarshitEthic ↗</a></div>
   </div>
-
-  <section class="hero">
-    <div class="eyebrow"><span class="dot"></span>AI DEVELOPER AGENT / OPEN SOURCE</div>
-    <h1>Give it a task.<br><span class="grad">Get a working patch.</span></h1>
-    <p class="sub">PatchPilot analyzes a Git repository, plans the change, edits the code, runs tests, and reports a reviewable Git diff — locally, with your model of choice.</p>
-    <div class="hero-meta"><span class="meta">GitHub repos</span><span class="meta">Ollama</span><span class="meta">Python + FastAPI</span><span class="meta">MIT licensed</span></div>
-  </section>
-
-  <div class="grid" id="agent">
-    <div class="card">
-      <div class="card-head"><div class="card-title">Agent input</div><div class="ready">● local ready</div></div>
-      <label>GitHub repository URL</label>
-      <input id="repo" placeholder="https://github.com/owner/repo">
-      <label>Task / issue</label>
-      <textarea id="task" placeholder="Fix the login redirect bug when a session expires"></textarea>
-      <div class="row">
-        <div><label>Provider</label><select id="provider"><option value="ollama">Ollama</option><option value="openai">OpenAI</option><option value="openrouter">OpenRouter</option></select></div>
-        <div><label>Model</label><input id="model" value="qwen2.5-coder:14b"></div>
-      </div>
-      <label>Repair iterations</label>
-      <select id="iterations"><option>1</option><option selected>3</option><option>5</option></select>
-      <button id="run" onclick="runAgent()">Run PatchPilot →</button>
-      <div class="status" id="status"></div>
-    </div>
-
-    <div class="card" id="result">
-      <div class="result-top"><div><div class="card-title">Run result</div><div class="summary" id="summary" style="margin-top:8px">Nothing run yet.</div></div><div class="result-badge">PATCH REVIEW</div></div>
-      <div class="section"><div class="section-label">Implementation plan</div><div id="plan"></div></div>
-      <div class="section"><div class="section-label">Likely touched files</div><div id="files"></div></div>
-      <div class="section"><div class="section-label">Tests</div><div id="tests">—</div><pre id="testOutput" class="codebox"></pre></div>
-      <div class="section"><div class="section-label">Git diff</div><pre class="diff" id="diff">—</pre></div>
-    </div>
+  <section class="hero"><div class="eyebrow"><span class="dot"></span>AI DEVELOPER AGENT / OPEN SOURCE</div><h1>Give it a task.<br><span class="grad">Get a working patch.</span></h1><p class="sub">PatchPilot analyzes a Git repository, plans the change, edits the code, runs tests, and reports a reviewable Git diff — locally, with your model of choice.</p><div class="hero-meta"><span class="meta">GitHub repos</span><span class="meta">Ollama</span><span class="meta">Python + FastAPI</span><span class="meta">MIT licensed</span></div></section>
+  <div class="grid" id="agent"><div class="card"><div class="card-head"><div class="card-title">Agent input</div><div class="ready">● local ready</div></div><label>GitHub repository URL</label><input id="repo" placeholder="https://github.com/owner/repo"><label>Task / issue</label><textarea id="task" placeholder="Fix the login redirect bug when a session expires"></textarea><div class="row"><div><label>Provider</label><select id="provider"><option value="ollama">Ollama</option><option value="openai">OpenAI</option><option value="openrouter">OpenRouter</option></select></div><div><label>Model</label><input id="model" value="qwen2.5-coder:14b"></div></div><label>Repair iterations</label><select id="iterations"><option>1</option><option selected>3</option><option>5</option></select><button id="run" onclick="runAgent()">Run PatchPilot →</button><div class="status" id="status"></div></div>
+    <div class="card" id="result"><div class="result-top"><div><div class="card-title">Run result</div><div class="summary" id="summary" style="margin-top:8px">Nothing run yet.</div></div><div class="result-badge">PATCH REVIEW</div></div><div class="section"><div class="section-label">Implementation plan</div><div id="plan"></div></div><div class="section"><div class="section-label">Likely touched files</div><div id="files"></div></div><div class="section"><div class="section-label">Tests</div><div id="tests">—</div><pre id="testOutput" class="codebox"></pre></div><div class="section"><div class="section-label">Git diff</div><pre class="diff" id="diff">—</pre></div></div>
   </div>
-
   <div class="footer" id="footer"><span>Open source · MIT · Built by HarshitEthic</span><a href="https://github.com/harshitethic/PatchPilot" target="_blank" rel="noreferrer">github.com/harshitethic/PatchPilot ↗</a></div>
 </div>
 <script>
 const API='http://127.0.0.1:8000';
-async function runAgent(){
-  const btn=document.getElementById('run'),status=document.getElementById('status');
-  btn.disabled=true;status.textContent='Cloning repository and running agent…';
-  document.getElementById('summary').textContent='Working…';
-  try{
-    const res=await fetch(API+'/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({repo_url:repo.value,task:task.value,provider:provider.value,model:model.value,max_iterations:Number(iterations.value)})});
-    const data=await res.json();
-    if(!res.ok)throw Error(data.detail||'Request failed');
-    summary.textContent=data.summary||'Done';
-    plan.innerHTML=(data.plan||[]).map((x,i)=>`<div class="step"><span style="color:var(--accent)">${String(i+1).padStart(2,'0')}</span>&nbsp;&nbsp;${escapeHtml(x)}</div>`).join('')||'No plan returned';
-    files.innerHTML=(data.touched_files||[]).map(x=>`<span class="pill">${escapeHtml(x)}</span>`).join('')||'No files reported';
-    tests.innerHTML=data.test_command?`<span class="${data.tests_passed?'ok':'bad'}">${data.tests_passed?'✓ Tests passed':'✗ Tests failed'}</span><br><code>${escapeHtml(data.test_command)}</code>`:'No test command identified';
-    testOutput.textContent=data.test_output||'';diff.textContent=data.diff||'No changes';
-    status.textContent=`Workspace ${data.workspace_id} • ${data.history.length} agent actions`;
-  }catch(e){status.textContent='Error: '+e.message;summary.textContent='Run failed';}
-  finally{btn.disabled=false}
-}
+function applyTheme(theme){document.documentElement.setAttribute('data-theme',theme);localStorage.setItem('patchpilot-theme',theme);const dark=theme==='dark';document.getElementById('themeIcon').textContent=dark?'☀':'☾';document.getElementById('themeText').textContent=dark?'Dark mode':'Light mode';}
+function toggleTheme(){applyTheme((document.documentElement.getAttribute('data-theme')||'dark')==='dark'?'light':'dark');}
+const savedTheme=localStorage.getItem('patchpilot-theme');applyTheme(savedTheme||'dark');
+async function runAgent(){const btn=document.getElementById('run'),status=document.getElementById('status');btn.disabled=true;status.textContent='Cloning repository and running agent…';document.getElementById('summary').textContent='Working…';try{const res=await fetch(API+'/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({repo_url:repo.value,task:task.value,provider:provider.value,model:model.value,max_iterations:Number(iterations.value)})});const data=await res.json();if(!res.ok)throw Error(data.detail||'Request failed');summary.textContent=data.summary||'Done';plan.innerHTML=(data.plan||[]).map((x,i)=>`<div class="step"><span style="color:var(--accent)">${String(i+1).padStart(2,'0')}</span>&nbsp;&nbsp;${escapeHtml(x)}</div>`).join('')||'No plan returned';files.innerHTML=(data.touched_files||[]).map(x=>`<span class="pill">${escapeHtml(x)}</span>`).join('')||'No files reported';tests.innerHTML=data.test_command?`<span class="${data.tests_passed?'ok':'bad'}">${data.tests_passed?'✓ Tests passed':'✗ Tests failed'}</span><br><code>${escapeHtml(data.test_command)}</code>`:'No test command identified';testOutput.textContent=data.test_output||'';diff.textContent=data.diff||'No changes';status.textContent=`Workspace ${data.workspace_id} • ${data.branch||'isolated branch'} • ${data.history.length} agent actions`;}catch(e){status.textContent='Error: '+e.message;summary.textContent='Run failed';}finally{btn.disabled=false}}
 function escapeHtml(s){return String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\'':'&#39;','"':'&quot;'}[c]))}
 </script>
 </body>
