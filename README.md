@@ -18,7 +18,7 @@ It is designed to sit **between an issue and a pull request** — with the devel
 └─────────┬──────────┘
           ↓
 ┌────────────────────┐
-│ Task / Issue       │
+│ Task / GitHub issue│
 └─────────┬──────────┘
           ↓
 ┌────────────────────┐
@@ -27,6 +27,11 @@ It is designed to sit **between an issue and a pull request** — with the devel
           ↓
 ┌────────────────────┐
 │ Implementation plan│
+└─────────┬──────────┘
+          ↓
+┌────────────────────┐
+│ Create isolated    │
+│ Git branch         │
 └─────────┬──────────┘
           ↓
 ┌────────────────────┐
@@ -56,12 +61,68 @@ It is designed to sit **between an issue and a pull request** — with the devel
 - ✍️ Structured code/file editing instead of trusting raw model-generated diffs
 - 🧪 Automatic test-command detection and execution
 - 🔁 Limited repair loop when tests fail
+- 🌿 **Automatic isolated Git branch per run**
+- 🐙 **GitHub issue import via API**
 - 📦 Isolated per-run workspaces
 - 🔍 Reviewable Git diffs
 - 🏠 Local-first LLM support with Ollama
 - 🔌 OpenAI/OpenRouter-compatible provider support
 - ⚡ FastAPI backend + lightweight web UI
 - 🐳 Docker support for the backend
+
+---
+
+## 🆕 New in v0.4
+
+### Import GitHub issues
+
+PatchPilot can now turn a GitHub issue into an agent task instead of making you copy the issue manually.
+
+```http
+POST /api/import-issue
+Content-Type: application/json
+
+{
+  "repo": "owner/project",
+  "issue_number": 42
+}
+```
+
+The response contains the issue title, description, URL, and a normalized `task` string ready for the agent.
+
+A direct lookup is also available:
+
+```http
+GET /api/github/issue?repo=owner/project&issue_number=42
+```
+
+Set `GITHUB_TOKEN` in `backend/.env` before using these endpoints. The token is never returned by the API.
+
+### Automatic isolated branches
+
+Every agent run now creates a branch before applying changes:
+
+```text
+main
+  └── patchpilot/fix-login-a1b2c3d4
+          ├── AI edits
+          ├── tests
+          └── reviewable diff
+```
+
+You can provide a branch name in the run request:
+
+```json
+{
+  "repo_url": "https://github.com/owner/project.git",
+  "task": "Fix the expired-session redirect",
+  "branch_name": "fix/expired-session"
+}
+```
+
+If omitted, PatchPilot generates a unique `patchpilot/...` branch name automatically.
+
+**Important:** the current version creates the branch only inside PatchPilot's cloned workspace. It does **not** push the branch to GitHub yet. Remote commits and pull requests remain future roadmap items.
 
 ---
 
@@ -79,13 +140,13 @@ The goal is not to replace a developer. The goal is to remove repetitive reposit
 
 ### 1. Fix a GitHub issue
 
-Give PatchPilot a repository and a bug description:
+Import an issue directly:
 
 ```text
-Fix the authentication bug when an expired session token is submitted.
+owner/project #42
 ```
 
-PatchPilot can inspect the project, determine likely files, propose the implementation, apply changes, and run the available tests.
+PatchPilot retrieves the title and description and turns them into an agent task.
 
 ### 2. Add a small feature
 
@@ -115,6 +176,26 @@ Use the planning stage as a fast first pass over an unfamiliar codebase before m
 
 ---
 
+## 🔌 API
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/api/health` | GET | Service health check |
+| `/api/run` | POST | Clone, plan, edit, test, repair, and return a diff |
+| `/api/execute` | POST | Execute a command inside an existing workspace |
+| `/api/workspace` | POST | Inspect workspace files and current diff |
+| `/api/github/issue` | GET | Fetch a GitHub issue |
+| `/api/import-issue` | POST | Convert a GitHub issue into an agent task |
+| `/api/openapi-summary` | GET | Return PatchPilot feature metadata |
+
+The FastAPI application also exposes its generated API documentation when the backend is running:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+---
+
 ## 🏗️ Architecture
 
 ```text
@@ -131,8 +212,14 @@ Use the planning stage as a fast first pass over an unfamiliar codebase before m
               ↓                 ↓                 ↓
        ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
        │ Git / Repo  │   │ LLM Provider│   │ Test Runner │
-       │ Workspace   │   │ Ollama/API  │   │ + git diff  │
+       │ + Branches  │   │ Ollama/API  │   │ + git diff  │
        └─────────────┘   └─────────────┘   └─────────────┘
+              ↑
+              │
+       ┌─────────────┐
+       │ GitHub API  │
+       │ Issue import│
+       └─────────────┘
 ```
 
 ### Tech stack
@@ -141,6 +228,7 @@ Use the planning stage as a fast first pass over an unfamiliar codebase before m
 - **Agent model:** Ollama / OpenAI-compatible APIs
 - **Default model:** `qwen2.5-coder:14b`
 - **Repository operations:** Git
+- **GitHub integration:** GitHub REST API
 - **Frontend:** HTML, CSS, vanilla JavaScript
 - **Deployment:** Docker / Docker Compose
 
@@ -168,10 +256,26 @@ ollama list
 
 You do **not** need to run `ollama serve` if the Ollama application/server is already running.
 
-### 3. Set up the backend
+### 3. Configure GitHub issue import
+
+Copy the example environment file:
 
 ```bash
 cd backend
+cp .env.example .env
+```
+
+Then add a GitHub token:
+
+```text
+GITHUB_TOKEN=your_github_token
+```
+
+The token needs permission to read the repositories/issues you want PatchPilot to import. Keep `.env` private and never commit it.
+
+### 4. Set up the backend
+
+```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -184,7 +288,7 @@ Verify:
 curl http://127.0.0.1:8000/api/health
 ```
 
-### 4. Start the frontend
+### 5. Start the frontend
 
 Open another terminal:
 
@@ -218,13 +322,33 @@ Add a README section called "PatchPilot Test" explaining that this repository is
 A successful run should produce:
 
 - an implementation plan
+- an isolated branch name
 - the likely files to change
 - a test result
 - the applied file changes
 - a final Git diff
 
----
+### GitHub issue workflow
 
+```text
+GitHub issue #42
+       ↓
+/api/import-issue
+       ↓
+Normalized agent task
+       ↓
+/api/run
+       ↓
+New isolated branch
+       ↓
+AI implementation
+       ↓
+Tests + repair loop
+       ↓
+Reviewable diff
+```
+
+---
 
 ## 📸 Screenshots
 
@@ -266,6 +390,8 @@ The agent can clone repositories and execute detected project commands inside a 
 - secret isolation
 - explicit human approval before write/push/PR actions
 
+GitHub issue import also introduces a credential boundary: keep `GITHUB_TOKEN` server-side and use the minimum permissions required.
+
 The project roadmap intentionally includes a stronger sandbox for this reason.
 
 ---
@@ -282,13 +408,16 @@ The project roadmap intentionally includes a stronger sandbox for this reason.
 - [x] Repair loop
 - [x] Reviewable Git diff
 
+### v0.4 — Repository workflow
+
+- [x] GitHub issue import
+- [x] Automatic isolated branches
+- [ ] Commit changes from the agent
+- [ ] Open pull requests automatically
+
 ### Next
 
 - [ ] GitHub App authentication
-- [ ] Import GitHub issues directly
-- [ ] Create isolated branches automatically
-- [ ] Commit changes from the agent
-- [ ] Open pull requests automatically
 - [ ] Streaming agent events
 - [ ] File-aware tool calling
 - [ ] Strong sandboxing with Docker / microVMs
