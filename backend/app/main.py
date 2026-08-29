@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKSPACES = ROOT / ".workspaces"
 WORKSPACES.mkdir(exist_ok=True)
 
-app = FastAPI(title=APP_NAME, version="0.3.0")
+app = FastAPI(title=APP_NAME, version="0.4.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -35,6 +35,7 @@ class RunRequest(BaseModel):
     provider: str = "ollama"
     model: str = "qwen2.5-coder:14b"
     max_iterations: int = Field(default=3, ge=1, le=5)
+    branch_name: str | None = Field(default=None, max_length=80)
 
 
 class WorkspaceRequest(BaseModel):
@@ -44,6 +45,11 @@ class WorkspaceRequest(BaseModel):
 class CommandRequest(BaseModel):
     workspace_id: str
     command: str = Field(..., min_length=1, max_length=1000)
+
+
+class IssueRequest(BaseModel):
+    repo: str = Field(..., pattern=r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+    issue_number: int = Field(..., ge=1)
 
 
 def run(cmd: list[str], cwd: Path, timeout: int = 120) -> tuple[int, str]:
@@ -67,6 +73,12 @@ def run(cmd: list[str], cwd: Path, timeout: int = 120) -> tuple[int, str]:
 def safe_repo_name(url: str) -> str:
     clean = url.rstrip("/").split("/")[-1]
     return re.sub(r"[^a-zA-Z0-9_.-]", "-", clean.removesuffix(".git"))[:80] or "repo"
+
+
+def safe_branch_name(name: str) -> str:
+    value = re.sub(r"[^a-zA-Z0-9._/-]+", "-", name.strip()).strip("/-." )
+    value = re.sub(r"/{2,}", "/", value)
+    return value[:80] or "patchpilot/task"
 
 
 def clone_repo(repo_url: str) -> tuple[str, Path]:
@@ -112,23 +124,6 @@ def read_repo_context(repo: Path, files: list[str], limit_chars: int = 65000) ->
         chunks.append(piece)
         total += len(piece)
     return "".join(chunks)
-
-
-def parse_json(raw: str) -> dict[str, Any]:
-    raw = raw.strip()
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?", "", raw).strip()
-        raw = re.sub(r"```$", "", raw).strip()
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(0))
-            except json.JSONDecodeError:
-                pass
-    return {}
 
 
 async def ask_model(provider: str, model: str, system: str, user: str) -> str:
@@ -273,9 +268,51 @@ def workspace_repo(workspace_id: str) -> Path:
     return repo
 
 
+def github_headers() -> dict[str, str]:
+    token = os.getenv("GITHUB_TOKEN", "")
+    if not token:
+        raise HTTPException(400, "GITHUB_TOKEN is not configured")
+    return {"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}", "X-GitHub-Api-Version": "2022-11-28"}
+
+
 @app.get("/api/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "service": APP_NAME, "version": "0.2.0"}
+    return {"status": "ok", "service": APP_NAME, "version": "0.4.0"}
+
+
+@app.get("/api/github/issue")
+async def get_issue(repo: str, issue_number: int) -> dict[str, Any]:
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        raise HTTPException(400, "repo must look like owner/name")
+    url = f"https://api.github.com/repos/{repo}/issues/{issue_number}"
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.get(url, headers=github_headers())
+    if response.status_code >= 400:
+        raise HTTPException(response.status_code, f"GitHub issue request failed: {response.text[:1000]}")
+    issue = response.json()
+    return {
+        "number": issue.get("number"),
+        "title": issue.get("title", ""),
+        "body": issue.get("body") or "",
+        "state": issue.get("state"),
+        "html_url": issue.get("html_url"),
+        "labels": [label.get("name") for label in issue.get("labels", [])],
+        "user": (issue.get("user") or {}).get("login"),
+    }
+
+
+@app.post("/api/import-issue")
+async def import_issue(req: IssueRequest) -> dict[str, Any]:
+    url = f"https://api.github.com/repos/{req.repo}/issues/{req.issue_number}"
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.get(url, headers=github_headers())
+    if response.status_code >= 400:
+        raise HTTPException(response.status_code, f"GitHub issue request failed: {response.text[:1000]}")
+    issue = response.json()
+    title = issue.get("title", "Untitled issue")
+    body = issue.get("body") or "No issue description provided."
+    task = f"GitHub Issue #{req.issue_number}: {title}\n\n{body}".strip()
+    return {"repo": req.repo, "issue_number": req.issue_number, "title": title, "task": task, "url": issue.get("html_url")}
 
 
 @app.post("/api/run")
@@ -283,15 +320,15 @@ async def run_agent(req: RunRequest) -> dict[str, Any]:
     workspace_id, repo = clone_repo(req.repo_url)
     files = list_files(repo)
     context = read_repo_context(repo, files)
-    code, branch = run(["git", "branch", "--show-current"], repo)
-    branch = branch.strip() or "main"
+    _, base_branch = run(["git", "branch", "--show-current"], repo)
+    base_branch = base_branch.strip() or "main"
 
-    plan_raw = await ask_model(
-        req.provider,
-        req.model,
-        PLANNER,
-        f"Repository: {req.repo_url}\nTask: {req.task}\n\nFiles:\n{chr(10).join(files)}\n\nContext:\n{context}",
-    )
+    requested_branch = safe_branch_name(req.branch_name or f"patchpilot/{safe_repo_name(req.repo_url)}-{next(tempfile._get_candidate_names())[:8]}")
+    code, branch_output = run(["git", "switch", "-c", requested_branch], repo, 30)
+    if code != 0:
+        raise HTTPException(400, f"Could not create isolated branch: {branch_output[-1500:]}")
+
+    plan_raw = await ask_model(req.provider, req.model, PLANNER, f"Repository: {req.repo_url}\nTask: {req.task}\n\nFiles:\n{chr(10).join(files)}\n\nContext:\n{context}")
     plan = parse_json_object(plan_raw)
     test_command = plan.get("test_command")
 
@@ -317,10 +354,7 @@ async def run_agent(req: RunRequest) -> dict[str, Any]:
 
         current_context = read_repo_context(repo, list_files(repo))
         current_diff = build_patch(repo)
-        repair_input = (
-            f"TASK:\n{req.task}\n\nCURRENT DIFF:\n{current_diff}\n\nTEST OUTPUT:\n{test_output[-12000:]}\n\n"
-            f"CURRENT REPOSITORY CONTEXT:\n{current_context}"
-        )
+        repair_input = f"TASK:\n{req.task}\n\nCURRENT DIFF:\n{current_diff}\n\nTEST OUTPUT:\n{test_output[-12000:]}\n\nCURRENT REPOSITORY CONTEXT:\n{current_context}"
         repair_raw = await ask_model(req.provider, req.model, REPAIRER, repair_input)
         repair_edits = extract_model_edits(repair_raw)
         ok, repair_output = apply_edits(repo, repair_edits)
@@ -329,10 +363,12 @@ async def run_agent(req: RunRequest) -> dict[str, Any]:
             break
 
     diff_text = build_patch(repo)
+    _, status = run(["git", "status", "--short", "--branch"], repo, 30)
     return {
         "workspace_id": workspace_id,
         "repo_name": safe_repo_name(req.repo_url),
-        "branch": branch,
+        "base_branch": base_branch,
+        "branch": requested_branch,
         "summary": plan.get("summary", ""),
         "plan": plan.get("plan", []),
         "touched_files": plan.get("touched_files", []),
@@ -341,6 +377,7 @@ async def run_agent(req: RunRequest) -> dict[str, Any]:
         "test_output": last_test_output[-12000:],
         "diff": diff_text,
         "history": history,
+        "git_status": status.strip(),
     }
 
 
@@ -355,17 +392,24 @@ async def execute(req: CommandRequest) -> dict[str, Any]:
     return {"returncode": code, "output": output[-12000:]}
 
 
-@app.get("/api/diff/{workspace_id}")
-async def diff(workspace_id: str) -> dict[str, str]:
-    repo = workspace_repo(workspace_id)
-    code, output = run(["git", "diff", "--no-ext-diff"], repo, 60)
-    return {"diff": output if code == 0 else ""}
+@app.post("/api/workspace")
+async def workspace(req: WorkspaceRequest) -> dict[str, Any]:
+    repo = workspace_repo(req.workspace_id)
+    return {"workspace_id": req.workspace_id, "files": list_files(repo), "diff": build_patch(repo)}
 
 
-@app.delete("/api/workspaces/{workspace_id}")
-async def delete_workspace(workspace_id: str) -> dict[str, bool]:
-    target = WORKSPACES / workspace_id
-    if not target.exists():
-        raise HTTPException(404, "Workspace not found")
-    shutil.rmtree(target, ignore_errors=True)
-    return {"deleted": True}
+@app.get("/api/openapi-summary")
+async def openapi_summary() -> dict[str, Any]:
+    return {
+        "service": APP_NAME,
+        "version": "0.4.0",
+        "features": [
+            "repository cloning",
+            "task planning",
+            "structured edits",
+            "test execution",
+            "repair loop",
+            "isolated branches",
+            "GitHub issue import",
+        ],
+    }
