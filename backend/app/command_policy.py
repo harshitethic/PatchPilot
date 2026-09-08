@@ -40,7 +40,10 @@ def parse_safe_command(command: str) -> list[str]:
 
     if not argv:
         raise ValueError("command is empty")
-    executable = argv[0].rsplit("/", 1)[-1]
+
+    executable = argv[0]
+    if "/" in executable or "\\" in executable:
+        raise ValueError("path-qualified executables are not allowed")
     if executable not in SAFE_EXECUTABLES:
         raise ValueError(f"executable is not allowed: {executable}")
 
