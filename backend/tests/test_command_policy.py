@@ -28,6 +28,18 @@ class CommandPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not allowed"):
             parse_safe_command("git status")
 
+    def test_rejects_absolute_path_to_allowlisted_executable(self) -> None:
+        with self.assertRaisesRegex(ValueError, "path-qualified"):
+            parse_safe_command("/tmp/pytest -q")
+
+    def test_rejects_relative_path_to_allowlisted_executable(self) -> None:
+        with self.assertRaisesRegex(ValueError, "path-qualified"):
+            parse_safe_command("./pytest -q")
+
+    def test_rejects_windows_path_to_allowlisted_executable(self) -> None:
+        with self.assertRaisesRegex(ValueError, "path-qualified"):
+            parse_safe_command(r"tools\\pytest -q")
+
     def test_restricts_direct_python_scripts(self) -> None:
         with self.assertRaisesRegex(ValueError, "limited"):
             parse_safe_command("python dangerous.py")
