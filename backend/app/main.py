@@ -14,6 +14,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from app.command_policy import parse_safe_command
+
 APP_NAME = "PatchPilot"
 ROOT = Path(__file__).resolve().parents[2]
 WORKSPACES = ROOT / ".workspaces"
@@ -331,6 +333,14 @@ async def run_agent(req: RunRequest) -> dict[str, Any]:
     plan_raw = await ask_model(req.provider, req.model, PLANNER, f"Repository: {req.repo_url}\nTask: {req.task}\n\nFiles:\n{chr(10).join(files)}\n\nContext:\n{context}")
     plan = parse_json_object(plan_raw)
     test_command = plan.get("test_command")
+    test_argv: list[str] | None = None
+    if test_command is not None:
+        if not isinstance(test_command, str):
+            raise HTTPException(502, "Planner returned a non-string test command")
+        try:
+            test_argv = parse_safe_command(test_command)
+        except ValueError as exc:
+            raise HTTPException(502, f"Planner returned an unsafe test command: {exc}") from exc
 
     coder_input = f"TASK:\n{req.task}\n\nIMPLEMENTATION PLAN:\n{json.dumps(plan, indent=2)}\n\nCURRENT REPOSITORY CONTEXT:\n{context}"
     raw_edits = await ask_model(req.provider, req.model, CODER, coder_input)
@@ -344,9 +354,9 @@ async def run_agent(req: RunRequest) -> dict[str, Any]:
     last_test_code = 0
 
     for iteration in range(1, req.max_iterations + 1):
-        if not test_command:
+        if not test_argv:
             break
-        test_code, test_output = run(["bash", "-lc", test_command], repo, 180)
+        test_code, test_output = run(test_argv, repo, 180)
         last_test_code, last_test_output = test_code, test_output
         history.append({"iteration": iteration, "action": "test", "returncode": test_code, "output": test_output[-5000:]})
         if test_code == 0 or iteration >= req.max_iterations:
@@ -373,7 +383,7 @@ async def run_agent(req: RunRequest) -> dict[str, Any]:
         "plan": plan.get("plan", []),
         "touched_files": plan.get("touched_files", []),
         "test_command": test_command,
-        "tests_passed": bool(test_command) and last_test_code == 0,
+        "tests_passed": bool(test_argv) and last_test_code == 0,
         "test_output": last_test_output[-12000:],
         "diff": diff_text,
         "history": history,
@@ -384,11 +394,11 @@ async def run_agent(req: RunRequest) -> dict[str, Any]:
 @app.post("/api/execute")
 async def execute(req: CommandRequest) -> dict[str, Any]:
     repo = workspace_repo(req.workspace_id)
-    command = req.command.strip()
-    blocked = ["rm -rf /", "mkfs", ":(){ :|:& };:", "shutdown", "reboot"]
-    if any(token in command for token in blocked):
-        raise HTTPException(400, "Command blocked by PatchPilot safety guard")
-    code, output = run(["bash", "-lc", command], repo, 180)
+    try:
+        argv = parse_safe_command(req.command)
+    except ValueError as exc:
+        raise HTTPException(400, f"Command blocked by PatchPilot safety policy: {exc}") from exc
+    code, output = run(argv, repo, 180)
     return {"returncode": code, "output": output[-12000:]}
 
 
