@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import re
@@ -8,6 +9,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -78,12 +80,39 @@ def safe_repo_name(url: str) -> str:
 
 
 def safe_branch_name(name: str) -> str:
-    value = re.sub(r"[^a-zA-Z0-9._/-]+", "-", name.strip()).strip("/-." )
+    value = re.sub(r"[^a-zA-Z0-9._/-]+", "-", name.strip()).strip("/-.")
     value = re.sub(r"/{2,}", "/", value)
     return value[:80] or "patchpilot/task"
 
 
+def validate_repo_url(repo_url: str) -> str:
+    value = repo_url.strip()
+    parsed = urlsplit(value)
+    if parsed.scheme.lower() != "https" or not parsed.hostname:
+        raise HTTPException(400, "repo_url must use HTTPS")
+    if parsed.username is not None or parsed.password is not None:
+        raise HTTPException(400, "repo_url must not contain embedded credentials")
+    if parsed.query or parsed.fragment:
+        raise HTTPException(400, "repo_url must not contain a query or fragment")
+    if parsed.path in {"", "/"}:
+        raise HTTPException(400, "repo_url must include a repository path")
+
+    hostname = parsed.hostname.rstrip(".").lower()
+    if hostname == "localhost" or hostname.endswith(".localhost"):
+        raise HTTPException(400, "repo_url must not target localhost")
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        pass
+    else:
+        if not address.is_global:
+            raise HTTPException(400, "repo_url must not target a private or local IP address")
+
+    return value
+
+
 def clone_repo(repo_url: str) -> tuple[str, Path]:
+    repo_url = validate_repo_url(repo_url)
     workspace_id = next(tempfile._get_candidate_names())
     workdir = WORKSPACES / workspace_id
     workdir.mkdir(parents=True, exist_ok=False)
