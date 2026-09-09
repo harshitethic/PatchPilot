@@ -264,8 +264,13 @@ def model_error_preview(raw: str) -> str:
 
 
 def workspace_repo(workspace_id: str) -> Path:
-    repo = WORKSPACES / workspace_id / "repo"
-    if not repo.exists():
+    root = WORKSPACES.resolve()
+    repo = (root / workspace_id / "repo").resolve()
+    try:
+        repo.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid workspace id") from exc
+    if not repo.is_dir():
         raise HTTPException(404, "Workspace not found")
     return repo
 
