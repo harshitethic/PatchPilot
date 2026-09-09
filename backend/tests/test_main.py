@@ -16,6 +16,7 @@ from app.main import (
     parse_json_object,
     safe_branch_name,
     safe_repo_name,
+    validate_repo_url,
 )
 
 
@@ -31,6 +32,52 @@ class UtilitySafetyTests(unittest.TestCase):
             safe_branch_name("  feat//unsafe branch  "),
             "feat/unsafe-branch",
         )
+
+    def test_validate_repo_url_accepts_public_https_repository(self) -> None:
+        self.assertEqual(
+            validate_repo_url(" https://github.com/example/project.git "),
+            "https://github.com/example/project.git",
+        )
+
+    def test_validate_repo_url_rejects_non_https_transports(self) -> None:
+        for repo_url in (
+            "/tmp/local-repo",
+            "file:///tmp/local-repo",
+            "ssh://git@example.com/project.git",
+            "git@example.com:project.git",
+            "http://github.com/example/project.git",
+        ):
+            with self.subTest(repo_url=repo_url):
+                with self.assertRaises(HTTPException) as context:
+                    validate_repo_url(repo_url)
+                self.assertEqual(context.exception.status_code, 400)
+
+    def test_validate_repo_url_rejects_embedded_credentials(self) -> None:
+        with self.assertRaises(HTTPException) as context:
+            validate_repo_url("https://token@example.com/project.git")
+        self.assertEqual(context.exception.status_code, 400)
+
+    def test_validate_repo_url_rejects_local_network_literals(self) -> None:
+        for repo_url in (
+            "https://localhost/project.git",
+            "https://127.0.0.1/project.git",
+            "https://10.0.0.5/project.git",
+            "https://[::1]/project.git",
+        ):
+            with self.subTest(repo_url=repo_url):
+                with self.assertRaises(HTTPException) as context:
+                    validate_repo_url(repo_url)
+                self.assertEqual(context.exception.status_code, 400)
+
+    def test_validate_repo_url_rejects_query_and_fragment(self) -> None:
+        for repo_url in (
+            "https://github.com/example/project.git?token=secret",
+            "https://github.com/example/project.git#branch",
+        ):
+            with self.subTest(repo_url=repo_url):
+                with self.assertRaises(HTTPException) as context:
+                    validate_repo_url(repo_url)
+                self.assertEqual(context.exception.status_code, 400)
 
     def test_parse_json_object_accepts_fenced_json(self) -> None:
         payload = parse_json_object('```json\n{"summary":"ok","plan":[]}\n```')
