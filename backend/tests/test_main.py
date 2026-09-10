@@ -17,6 +17,7 @@ from app.main import (
     safe_branch_name,
     safe_repo_name,
     validate_repo_url,
+    workspace_repo,
 )
 
 
@@ -146,6 +147,28 @@ class UtilitySafetyTests(unittest.TestCase):
             self.assertFalse(ok)
             self.assertEqual(first.read_text(encoding="utf-8"), "alpha")
             self.assertEqual(second.read_text(encoding="utf-8"), "beta")
+
+    def test_workspace_repo_rejects_path_traversal(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "workspaces"
+            outside = Path(temp_dir) / "outside" / "repo"
+            root.mkdir()
+            outside.mkdir(parents=True)
+
+            with patch("app.main.WORKSPACES", root):
+                with self.assertRaises(HTTPException) as context:
+                    workspace_repo("../outside")
+
+            self.assertEqual(context.exception.status_code, 400)
+
+    def test_workspace_repo_returns_existing_repo_inside_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "workspaces"
+            repo = root / "safe-id" / "repo"
+            repo.mkdir(parents=True)
+
+            with patch("app.main.WORKSPACES", root):
+                self.assertEqual(workspace_repo("safe-id"), repo.resolve())
 
     def test_github_headers_requires_token(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
