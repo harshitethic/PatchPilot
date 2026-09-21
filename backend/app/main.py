@@ -94,12 +94,14 @@ def clone_repo(repo_url: str) -> tuple[str, Path]:
     return workspace_id, workdir / "repo"
 
 
-def _path_within_repo(repo: Path, candidate: Path) -> bool:
+def _resolve_repo_path(repo: Path, candidate: Path) -> Path | None:
+    root = repo.resolve()
     try:
-        candidate.resolve().relative_to(repo.resolve())
+        resolved = candidate.resolve()
+        resolved.relative_to(root)
     except (OSError, ValueError):
-        return False
-    return True
+        return None
+    return resolved
 
 
 def list_files(repo: Path, limit: int = 350) -> list[str]:
@@ -113,9 +115,10 @@ def list_files(repo: Path, limit: int = 350) -> list[str]:
             continue
         if any(part in ignored for part in rel.parts):
             continue
-        if not _path_within_repo(root, p):
+        resolved = _resolve_repo_path(root, p)
+        if resolved is None:
             continue
-        if p.is_file():
+        if resolved.is_file():
             results.append(str(rel).replace("\\", "/"))
             if len(results) >= limit:
                 break
@@ -130,8 +133,8 @@ def read_repo_context(repo: Path, files: list[str], limit_chars: int = 65000) ->
     chunks: list[str] = []
     total = 0
     for rel in ordered[:100]:
-        candidate = root / rel
-        if not _path_within_repo(root, candidate):
+        candidate = _resolve_repo_path(root, root / rel)
+        if candidate is None:
             continue
         try:
             text = candidate.read_text(encoding="utf-8", errors="ignore")
