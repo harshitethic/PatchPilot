@@ -60,6 +60,26 @@ class UtilitySafetyTests(unittest.TestCase):
             self.assertTrue(ok, message)
             self.assertEqual(target.read_text(encoding="utf-8"), "after\n")
 
+    def test_apply_edits_preserves_multiple_edits_to_same_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            target = repo / "example.txt"
+            target.write_text("alpha beta gamma", encoding="utf-8")
+
+            ok, message = apply_edits(
+                repo,
+                {
+                    "edits": [
+                        {"path": "example.txt", "old": "alpha", "new": "one"},
+                        {"path": "example.txt", "old": "gamma", "new": "three"},
+                    ]
+                },
+            )
+
+            self.assertTrue(ok, message)
+            self.assertEqual(target.read_text(encoding="utf-8"), "one beta three")
+            self.assertEqual(message, "Applied 2 edit(s)")
+
     def test_apply_edits_rejects_path_escape(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = Path(temp_dir)
