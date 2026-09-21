@@ -13,7 +13,9 @@ from app.main import (
     apply_edits,
     github_headers,
     health,
+    list_files,
     parse_json_object,
+    read_repo_context,
     safe_branch_name,
     safe_repo_name,
     workspace_repo,
@@ -100,6 +102,64 @@ class UtilitySafetyTests(unittest.TestCase):
             self.assertFalse(ok)
             self.assertEqual(first.read_text(encoding="utf-8"), "alpha")
             self.assertEqual(second.read_text(encoding="utf-8"), "beta")
+
+    def test_list_files_excludes_symlink_that_resolves_outside_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo = root / "repo"
+            repo.mkdir()
+            outside = root / "outside-secret.txt"
+            outside.write_text("TOP SECRET", encoding="utf-8")
+            link = repo / "linked-secret.txt"
+            try:
+                link.symlink_to(outside)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks are not available in this environment")
+
+            self.assertNotIn("linked-secret.txt", list_files(repo))
+
+    def test_read_repo_context_rejects_parent_path_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo = root / "repo"
+            repo.mkdir()
+            outside = root / "secret.txt"
+            outside.write_text("DO NOT EXPOSE", encoding="utf-8")
+
+            context = read_repo_context(repo, ["../secret.txt"])
+
+            self.assertEqual(context, "")
+            self.assertNotIn("DO NOT EXPOSE", context)
+
+    def test_read_repo_context_rejects_outside_symlink_even_if_supplied_directly(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo = root / "repo"
+            repo.mkdir()
+            outside = root / "secret.txt"
+            outside.write_text("DO NOT EXPOSE", encoding="utf-8")
+            link = repo / "secret-link.txt"
+            try:
+                link.symlink_to(outside)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks are not available in this environment")
+
+            context = read_repo_context(repo, ["secret-link.txt"])
+
+            self.assertEqual(context, "")
+            self.assertNotIn("DO NOT EXPOSE", context)
+
+    def test_read_repo_context_still_reads_normal_repository_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            source = repo / "src" / "example.py"
+            source.parent.mkdir()
+            source.write_text("print('safe')\n", encoding="utf-8")
+
+            context = read_repo_context(repo, ["src/example.py"])
+
+            self.assertIn("### FILE: src/example.py", context)
+            self.assertIn("print('safe')", context)
 
     def test_workspace_repo_rejects_path_traversal(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
