@@ -390,6 +390,8 @@ The agent can clone repositories and execute detected project commands inside a 
 - secret isolation
 - explicit human approval before write/push/PR actions
 
+Repository context collection is confined to files whose resolved paths stay inside the cloned repository. Paths or symlinks that resolve outside the clone are excluded before file contents are sent to the configured model.
+
 GitHub issue import also introduces a credential boundary: keep `GITHUB_TOKEN` server-side and use the minimum permissions required.
 
 The project roadmap intentionally includes a stronger sandbox for this reason.
