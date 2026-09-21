@@ -94,14 +94,29 @@ def clone_repo(repo_url: str) -> tuple[str, Path]:
     return workspace_id, workdir / "repo"
 
 
+def _path_within_repo(repo: Path, candidate: Path) -> bool:
+    try:
+        candidate.resolve().relative_to(repo.resolve())
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 def list_files(repo: Path, limit: int = 350) -> list[str]:
     ignored = {".git", "node_modules", ".venv", "venv", "dist", "build", "__pycache__", ".next", "coverage", ".cache"}
+    root = repo.resolve()
     results: list[str] = []
     for p in repo.rglob("*"):
-        if any(part in ignored for part in p.parts):
+        try:
+            rel = p.relative_to(repo)
+        except ValueError:
+            continue
+        if any(part in ignored for part in rel.parts):
+            continue
+        if not _path_within_repo(root, p):
             continue
         if p.is_file():
-            results.append(str(p.relative_to(repo)).replace("\\", "/"))
+            results.append(str(rel).replace("\\", "/"))
             if len(results) >= limit:
                 break
     return sorted(results)
@@ -111,11 +126,15 @@ def read_repo_context(repo: Path, files: list[str], limit_chars: int = 65000) ->
     preferred_ext = {".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java", ".kt", ".rb", ".php", ".json", ".yml", ".yaml", ".toml", ".md", ".sql"}
     preferred_names = {"package.json", "pyproject.toml", "requirements.txt", "README.md", "go.mod", "Cargo.toml"}
     ordered = sorted(files, key=lambda f: (Path(f).name not in preferred_names, Path(f).suffix not in preferred_ext, len(f)))
+    root = repo.resolve()
     chunks: list[str] = []
     total = 0
     for rel in ordered[:100]:
+        candidate = root / rel
+        if not _path_within_repo(root, candidate):
+            continue
         try:
-            text = (repo / rel).read_text(encoding="utf-8", errors="ignore")
+            text = candidate.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
         if len(text) > 7000:
