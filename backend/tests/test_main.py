@@ -1,5 +1,6 @@
 import asyncio
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +15,7 @@ from app.main import (
     github_headers,
     health,
     parse_json_object,
+    run,
     safe_branch_name,
     safe_repo_name,
     workspace_repo,
@@ -137,6 +139,18 @@ class UtilitySafetyTests(unittest.TestCase):
                 task="fix",
                 max_iterations=0,
             )
+
+    def test_run_handles_bytes_output_from_timeout(self) -> None:
+        timeout = subprocess.TimeoutExpired(
+            cmd=["python", "-m", "pytest"],
+            timeout=1,
+            output=b"partial output",
+        )
+        with patch("app.main.subprocess.run", side_effect=timeout):
+            code, output = run(["python", "-m", "pytest"], Path("."), timeout=1)
+
+        self.assertEqual(code, 124)
+        self.assertEqual(output, "partial output\n[command timed out]")
 
     def test_health_contract(self) -> None:
         self.assertEqual(
