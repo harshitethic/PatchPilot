@@ -68,8 +68,10 @@ def run(cmd: list[str], cwd: Path, timeout: int = 120) -> tuple[int, str]:
         )
         return proc.returncode, proc.stdout
     except subprocess.TimeoutExpired as exc:
-        out = (exc.stdout or "") + "\n[command timed out]"
-        return 124, out
+        out = exc.stdout or ""
+        if isinstance(out, bytes):
+            out = out.decode(errors="replace")
+        return 124, f"{out}\n[command timed out]"
 
 
 def safe_repo_name(url: str) -> str:
