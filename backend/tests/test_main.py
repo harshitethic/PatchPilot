@@ -2,6 +2,7 @@ import asyncio
 import os
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,7 +11,10 @@ from pydantic import ValidationError
 
 from app.main import (
     RunRequest,
+    WorkspaceCleanupRequest,
     apply_edits,
+    cleanup_stale_workspaces,
+    delete_workspace,
     github_headers,
     health,
     parse_json_object,
@@ -122,6 +126,58 @@ class UtilitySafetyTests(unittest.TestCase):
 
             with patch("app.main.WORKSPACES", root):
                 self.assertEqual(workspace_repo("safe-id"), repo.resolve())
+
+    def test_cleanup_request_rejects_excessive_retention_window(self) -> None:
+        with self.assertRaises(ValidationError):
+            WorkspaceCleanupRequest(max_age_hours=24 * 31)
+
+    def test_cleanup_stale_workspaces_deletes_only_expired_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "workspaces"
+            old = root / "old-one"
+            fresh = root / "fresh-one"
+            old.mkdir(parents=True)
+            fresh.mkdir()
+            now = datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc)
+            old_ts = now.timestamp() - 48 * 60 * 60
+            fresh_ts = now.timestamp() - 2 * 60 * 60
+            os.utime(old, (old_ts, old_ts))
+            os.utime(fresh, (fresh_ts, fresh_ts))
+
+            with patch("app.main.WORKSPACES", root):
+                deleted = cleanup_stale_workspaces(24, now=now)
+
+            self.assertEqual(deleted, ["old-one"])
+            self.assertFalse(old.exists())
+            self.assertTrue(fresh.exists())
+
+    def test_delete_workspace_removes_only_selected_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "workspaces"
+            first = root / "first" / "repo"
+            second = root / "second" / "repo"
+            first.mkdir(parents=True)
+            second.mkdir(parents=True)
+
+            with patch("app.main.WORKSPACES", root):
+                delete_workspace("first")
+
+            self.assertFalse(first.parent.exists())
+            self.assertTrue(second.parent.exists())
+
+    def test_delete_workspace_rejects_path_traversal(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "workspaces"
+            outside = Path(temp_dir) / "outside"
+            root.mkdir()
+            outside.mkdir()
+
+            with patch("app.main.WORKSPACES", root):
+                with self.assertRaises(HTTPException) as context:
+                    delete_workspace("../outside")
+
+            self.assertEqual(context.exception.status_code, 400)
+            self.assertTrue(outside.exists())
 
     def test_github_headers_requires_token(self) -> None:
         with patch.dict(os.environ, {}, clear=True):

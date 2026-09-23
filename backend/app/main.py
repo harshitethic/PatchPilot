@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,10 @@ class WorkspaceRequest(BaseModel):
 class CommandRequest(BaseModel):
     workspace_id: str
     command: str = Field(..., min_length=1, max_length=1000)
+
+
+class WorkspaceCleanupRequest(BaseModel):
+    max_age_hours: int = Field(default=24, ge=1, le=24 * 30)
 
 
 class IssueRequest(BaseModel):
@@ -263,16 +268,91 @@ def model_error_preview(raw: str) -> str:
     return (raw or "").strip()[-3000:]
 
 
-def workspace_repo(workspace_id: str) -> Path:
+def workspace_dir(workspace_id: str) -> Path:
     root = WORKSPACES.resolve()
-    repo = (root / workspace_id / "repo").resolve()
+    workdir = (root / workspace_id).resolve()
     try:
-        repo.relative_to(root)
+        workdir.relative_to(root)
     except ValueError as exc:
         raise HTTPException(400, "Invalid workspace id") from exc
-    if not repo.is_dir():
+    if not workdir.is_dir():
         raise HTTPException(404, "Workspace not found")
-    return repo
+    return workdir
+
+
+def workspace_repo(workspace_id: str) -> Path:
+    repo = workspace_dir(workspace_id) / "repo"
+    if not repo.is_dir():
+        raise HTTPException(404, "Workspace repository not found")
+    return repo.resolve()
+
+
+def workspace_summary(workspace_id: str) -> dict[str, Any]:
+    workdir = workspace_dir(workspace_id)
+    repo = workspace_repo(workspace_id)
+    branch_code, branch = run(["git", "branch", "--show-current"], repo, 30)
+    status_code, status = run(["git", "status", "--short"], repo, 30)
+    return {
+        "workspace_id": workspace_id,
+        "branch": branch.strip() if branch_code == 0 else "",
+        "changed_files": (
+            len([line for line in status.splitlines() if line.strip()])
+            if status_code == 0
+            else None
+        ),
+        "updated_at": datetime.fromtimestamp(
+            workdir.stat().st_mtime,
+            tz=timezone.utc,
+        ).isoformat(),
+    }
+
+
+def list_workspace_summaries(limit: int = 100) -> list[dict[str, Any]]:
+    root = WORKSPACES.resolve()
+    rows: list[dict[str, Any]] = []
+    for entry in root.iterdir():
+        if not entry.is_dir() or not (entry / "repo").is_dir():
+            continue
+        try:
+            rows.append(workspace_summary(entry.name))
+        except HTTPException:
+            continue
+    rows.sort(key=lambda item: item["updated_at"], reverse=True)
+    return rows[:limit]
+
+
+def delete_workspace(workspace_id: str) -> None:
+    workdir = workspace_dir(workspace_id)
+    shutil.rmtree(workdir)
+
+
+def cleanup_stale_workspaces(
+    max_age_hours: int,
+    *,
+    now: datetime | None = None,
+) -> list[str]:
+    current = now or datetime.now(timezone.utc)
+    cutoff = current.timestamp() - max_age_hours * 60 * 60
+    deleted: list[str] = []
+    root = WORKSPACES.resolve()
+    for entry in root.iterdir():
+        if not entry.is_dir():
+            continue
+        try:
+            resolved = entry.resolve()
+            resolved.relative_to(root)
+        except (OSError, ValueError):
+            continue
+        try:
+            modified = resolved.stat().st_mtime
+        except OSError:
+            continue
+        if modified >= cutoff:
+            continue
+        shutil.rmtree(resolved, ignore_errors=True)
+        if not resolved.exists():
+            deleted.append(entry.name)
+    return sorted(deleted)
 
 
 def github_headers() -> dict[str, str]:
@@ -413,6 +493,28 @@ async def workspace(req: WorkspaceRequest) -> dict[str, Any]:
     return {"workspace_id": req.workspace_id, "files": list_files(repo), "diff": build_patch(repo)}
 
 
+@app.get("/api/workspaces")
+async def workspaces() -> dict[str, Any]:
+    rows = list_workspace_summaries()
+    return {"workspaces": rows, "count": len(rows)}
+
+
+@app.delete("/api/workspaces/{workspace_id}")
+async def remove_workspace(workspace_id: str) -> dict[str, Any]:
+    delete_workspace(workspace_id)
+    return {"workspace_id": workspace_id, "deleted": True}
+
+
+@app.post("/api/workspaces/cleanup")
+async def cleanup_workspaces(req: WorkspaceCleanupRequest) -> dict[str, Any]:
+    deleted = cleanup_stale_workspaces(req.max_age_hours)
+    return {
+        "deleted": deleted,
+        "count": len(deleted),
+        "max_age_hours": req.max_age_hours,
+    }
+
+
 @app.get("/api/openapi-summary")
 async def openapi_summary() -> dict[str, Any]:
     return {
@@ -425,6 +527,7 @@ async def openapi_summary() -> dict[str, Any]:
             "test execution",
             "repair loop",
             "isolated branches",
+            "workspace lifecycle management",
             "GitHub issue import",
         ],
     }
