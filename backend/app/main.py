@@ -49,6 +49,18 @@ class CommandRequest(BaseModel):
     command: str = Field(..., min_length=1, max_length=1000)
 
 
+class CommitRequest(BaseModel):
+    workspace_id: str
+    message: str = Field(..., min_length=1, max_length=200)
+    author_name: str = Field(default="PatchPilot", min_length=1, max_length=100)
+    author_email: str = Field(
+        default="patchpilot@localhost",
+        min_length=3,
+        max_length=254,
+        pattern=r"^[^@\s]+@[^@\s]+$",
+    )
+
+
 class IssueRequest(BaseModel):
     repo: str = Field(..., pattern=r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
     issue_number: int = Field(..., ge=1)
@@ -275,6 +287,74 @@ def workspace_repo(workspace_id: str) -> Path:
     return repo
 
 
+def commit_workspace(
+    repo: Path,
+    message: str,
+    author_name: str,
+    author_email: str,
+) -> dict[str, str]:
+    message = message.strip()
+    author_name = author_name.strip()
+    author_email = author_email.strip()
+    if not message:
+        raise HTTPException(400, "Commit message cannot be blank")
+    if not author_name:
+        raise HTTPException(400, "Commit author name cannot be blank")
+
+    code, status = run(["git", "status", "--porcelain"], repo, 30)
+    if code != 0:
+        raise HTTPException(500, f"Could not inspect workspace status: {status[-1500:]}")
+    if not status.strip():
+        raise HTTPException(400, "No workspace changes to commit")
+
+    code, output = run(["git", "add", "--all"], repo, 60)
+    if code != 0:
+        raise HTTPException(500, f"Could not stage workspace changes: {output[-1500:]}")
+
+    staged_code, staged_output = run(
+        ["git", "diff", "--cached", "--quiet"],
+        repo,
+        30,
+    )
+    if staged_code == 0:
+        raise HTTPException(400, "No workspace changes to commit")
+    if staged_code != 1:
+        raise HTTPException(
+            500,
+            f"Could not inspect staged changes: {staged_output[-1500:]}",
+        )
+
+    commit_code, commit_output = run(
+        [
+            "git",
+            "-c",
+            f"user.name={author_name}",
+            "-c",
+            f"user.email={author_email}",
+            "commit",
+            "-m",
+            message,
+        ],
+        repo,
+        120,
+    )
+    if commit_code != 0:
+        raise HTTPException(500, f"Git commit failed: {commit_output[-2000:]}")
+
+    sha_code, commit_sha = run(["git", "rev-parse", "HEAD"], repo, 30)
+    branch_code, branch = run(["git", "branch", "--show-current"], repo, 30)
+    if sha_code != 0 or branch_code != 0:
+        raise HTTPException(500, "Commit succeeded but Git metadata could not be read")
+
+    return {
+        "commit_sha": commit_sha.strip(),
+        "branch": branch.strip(),
+        "message": message,
+        "author_name": author_name,
+        "author_email": author_email,
+    }
+
+
 def github_headers() -> dict[str, str]:
     token = os.getenv("GITHUB_TOKEN", "")
     if not token:
@@ -413,6 +493,17 @@ async def workspace(req: WorkspaceRequest) -> dict[str, Any]:
     return {"workspace_id": req.workspace_id, "files": list_files(repo), "diff": build_patch(repo)}
 
 
+@app.post("/api/commit")
+async def commit(req: CommitRequest) -> dict[str, str]:
+    repo = workspace_repo(req.workspace_id)
+    return commit_workspace(
+        repo,
+        req.message,
+        req.author_name,
+        req.author_email,
+    )
+
+
 @app.get("/api/openapi-summary")
 async def openapi_summary() -> dict[str, Any]:
     return {
@@ -425,6 +516,7 @@ async def openapi_summary() -> dict[str, Any]:
             "test execution",
             "repair loop",
             "isolated branches",
+            "workspace commits",
             "GitHub issue import",
         ],
     }
