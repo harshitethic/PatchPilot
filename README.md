@@ -64,6 +64,7 @@ It is designed to sit **between an issue and a pull request** — with the devel
 - 🌿 **Automatic isolated Git branch per run**
 - 🐙 **GitHub issue import via API**
 - 📦 Isolated per-run workspaces
+- 🧹 Workspace listing, deletion, and stale-workspace cleanup
 - 🔍 Reviewable Git diffs
 - 🏠 Local-first LLM support with Ollama
 - 🔌 OpenAI/OpenRouter-compatible provider support
@@ -184,9 +185,23 @@ Use the planning stage as a fast first pass over an unfamiliar codebase before m
 | `/api/run` | POST | Clone, plan, edit, test, repair, and return a diff |
 | `/api/execute` | POST | Execute a command inside an existing workspace |
 | `/api/workspace` | POST | Inspect workspace files and current diff |
+| `/api/workspaces` | GET | List workspaces with branch, dirty-file count, and update time |
+| `/api/workspaces/{workspace_id}` | DELETE | Delete one workspace safely |
+| `/api/workspaces/cleanup` | POST | Delete stale workspaces older than a bounded age |
 | `/api/github/issue` | GET | Fetch a GitHub issue |
 | `/api/import-issue` | POST | Convert a GitHub issue into an agent task |
 | `/api/openapi-summary` | GET | Return PatchPilot feature metadata |
+
+Workspace cleanup is explicit and bounded. For example, to remove workspaces older than 24 hours:
+
+```http
+POST /api/workspaces/cleanup
+Content-Type: application/json
+
+{"max_age_hours": 24}
+```
+
+The cleanup request accepts 1 hour through 30 days. Workspace deletion uses the same containment boundary as workspace access so an id cannot escape `.workspaces`.
 
 The FastAPI application also exposes its generated API documentation when the backend is running:
 
