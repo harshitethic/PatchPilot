@@ -62,6 +62,7 @@ It is designed to sit **between an issue and a pull request** — with the devel
 - 🧪 Automatic test-command detection and execution
 - 🔁 Limited repair loop when tests fail
 - 🌿 **Automatic isolated Git branch per run**
+- ✅ **Explicit workspace commit API with per-commit author identity**
 - 🐙 **GitHub issue import via API**
 - 📦 Isolated per-run workspaces
 - 🔍 Reviewable Git diffs
@@ -122,7 +123,23 @@ You can provide a branch name in the run request:
 
 If omitted, PatchPilot generates a unique `patchpilot/...` branch name automatically.
 
-**Important:** the current version creates the branch only inside PatchPilot's cloned workspace. It does **not** push the branch to GitHub yet. Remote commits and pull requests remain future roadmap items.
+PatchPilot can also turn the reviewed workspace diff into a local Git commit:
+
+```http
+POST /api/commit
+Content-Type: application/json
+
+{
+  "workspace_id": "<run workspace id>",
+  "message": "fix: handle expired sessions",
+  "author_name": "PatchPilot",
+  "author_email": "patchpilot@localhost"
+}
+```
+
+The endpoint stages the workspace with `git add --all`, refuses clean workspaces, creates the commit without modifying global Git identity, and returns the commit SHA and branch.
+
+**Important:** branches and commits still exist only inside PatchPilot's cloned workspace. PatchPilot does **not** push to GitHub yet, so remote pull requests remain future roadmap work.
 
 ---
 
@@ -184,9 +201,21 @@ Use the planning stage as a fast first pass over an unfamiliar codebase before m
 | `/api/run` | POST | Clone, plan, edit, test, repair, and return a diff |
 | `/api/execute` | POST | Execute a command inside an existing workspace |
 | `/api/workspace` | POST | Inspect workspace files and current diff |
+| `/api/commit` | POST | Stage and commit the current workspace changes |
+| `/api/workspaces` | GET | List valid local workspaces with Git status |
+| `/api/workspaces/{workspace_id}` | DELETE | Delete a workspace (dirty workspaces require `force=true`) |
+| `/api/workspaces/cleanup` | POST | Preview or execute stale clean-workspace deletion |
 | `/api/github/issue` | GET | Fetch a GitHub issue |
 | `/api/import-issue` | POST | Convert a GitHub issue into an agent task |
 | `/api/openapi-summary` | GET | Return PatchPilot feature metadata |
+
+**Workspace cleanup safety:** `POST /api/workspaces/cleanup` with
+`{"max_age_hours":24}` only previews candidates by default. Explicitly send
+`{"max_age_hours":24,"dry_run":false}` to remove clean stale workspaces.
+Dirty workspaces and workspaces containing ignored files are always
+skipped by bulk cleanup, even with `dry_run=false`.
+Deletion refuses symlinked workspace directories and invalid identifiers.
+This is a local-only API: do not expose these endpoints to the public Internet.
 
 The FastAPI application also exposes its generated API documentation when the backend is running:
 
@@ -412,7 +441,7 @@ The project roadmap intentionally includes a stronger sandbox for this reason.
 
 - [x] GitHub issue import
 - [x] Automatic isolated branches
-- [ ] Commit changes from the agent
+- [x] Commit changes from the agent
 - [ ] Open pull requests automatically
 
 ### Next

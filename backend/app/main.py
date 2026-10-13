@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -48,6 +49,23 @@ class WorkspaceRequest(BaseModel):
 class CommandRequest(BaseModel):
     workspace_id: str
     command: str = Field(..., min_length=1, max_length=1000)
+
+
+class CommitRequest(BaseModel):
+    workspace_id: str
+    message: str = Field(..., min_length=1, max_length=200)
+    author_name: str = Field(default="PatchPilot", min_length=1, max_length=100)
+    author_email: str = Field(
+        default="patchpilot@localhost",
+        min_length=3,
+        max_length=254,
+        pattern=r"^[^@\s]+@[^@\s]+$",
+    )
+
+
+class WorkspaceCleanupRequest(BaseModel):
+    max_age_hours: int = Field(default=24, ge=1, le=24 * 30)
+    dry_run: bool = True
 
 
 class IssueRequest(BaseModel):
@@ -255,8 +273,9 @@ def apply_edits(repo: Path, payload: dict[str, Any]) -> tuple[bool, str]:
     edits = payload.get("edits")
     if not isinstance(edits, list):
         return False, "Model response missing edits array"
-    staged: list[tuple[Path, str]] = []
-    edited_paths: set[Path] = set()
+    # Validate every edit before writing any file. Sequential changes to one
+    # file use the previously staged contents, not the original on-disk text.
+    staged: dict[Path, str] = {}
     for i, edit in enumerate(edits):
         if not isinstance(edit, dict):
             return False, f"Edit {i+1} is not an object"
@@ -272,24 +291,24 @@ def apply_edits(repo: Path, payload: dict[str, Any]) -> tuple[bool, str]:
             return False, f"Edit {i+1} escapes repository: {rel}"
         if path.name == ".patchpilot.patch":
             return False, "Agent cannot modify PatchPilot control files"
-        if path in edited_paths:
-            return False, f"Duplicate edits to {rel} are not supported"
-        edited_paths.add(path)
         if not isinstance(old, str) or not isinstance(new, str):
             return False, f"Edit {i+1} requires string old/new values"
         if not path.exists() or not path.is_file():
             return False, f"File not found: {rel}"
-        try:
-            current = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            return False, f"Binary/non-text file is not editable: {rel}"
+        if path in staged:
+            current = staged[path]
+        else:
+            try:
+                current = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                return False, f"Binary/non-text file is not editable: {rel}"
         if current.count(old) != 1:
             return False, f"Expected exactly one match for old text in {rel}, found {current.count(old)}"
-        staged.append((path, current.replace(old, new, 1)))
+        staged[path] = current.replace(old, new, 1)
 
-    for path, content in staged:
+    for path, content in staged.items():
         path.write_text(content, encoding="utf-8")
-    return True, f"Applied {len(staged)} edit(s)"
+    return True, f"Applied {len(edits)} edit(s)"
 
 
 def build_patch(repo: Path) -> str:
@@ -308,18 +327,185 @@ def model_error_preview(raw: str) -> str:
     return (raw or "").strip()[-3000:]
 
 
-def workspace_repo(workspace_id: str) -> Path:
-    if not re.fullmatch(r"[a-zA-Z0-9_-]{6,64}", workspace_id):
+WORKSPACE_ID_PATTERN = re.compile(r"[a-zA-Z0-9_-]{6,64}")
+
+
+def workspace_dir(workspace_id: str) -> Path:
+    """Resolve only a direct, non-symlink workspace directory."""
+    if not WORKSPACE_ID_PATTERN.fullmatch(workspace_id):
         raise HTTPException(400, "Invalid workspace id")
     root = WORKSPACES.resolve()
-    repo = (root / workspace_id / "repo").resolve()
-    try:
-        repo.relative_to(root)
-    except ValueError as exc:
-        raise HTTPException(400, "Invalid workspace id") from exc
-    if not repo.is_dir():
+    workdir = root / workspace_id
+    if workdir.is_symlink():
+        raise HTTPException(400, "Workspace symlinks are not allowed")
+    if not workdir.is_dir() or workdir.resolve() != workdir:
         raise HTTPException(404, "Workspace not found")
-    return repo
+    repo = workdir / "repo"
+    if repo.is_symlink() or not repo.is_dir() or not repo.resolve().is_relative_to(workdir):
+        raise HTTPException(404, "Workspace repository not found")
+    return workdir
+
+
+def workspace_repo(workspace_id: str) -> Path:
+    return workspace_dir(workspace_id) / "repo"
+
+
+def _valid_workspaces() -> list[tuple[str, Path]]:
+    root = WORKSPACES.resolve()
+    if not root.exists():
+        return []
+    workdirs: list[tuple[str, Path]] = []
+    for entry in root.iterdir():
+        if entry.is_symlink() or not WORKSPACE_ID_PATTERN.fullmatch(entry.name):
+            continue
+        try:
+            workdirs.append((entry.name, workspace_dir(entry.name)))
+        except (HTTPException, OSError):
+            continue
+    return workdirs
+
+
+def _workspace_git_state(repo: Path) -> tuple[bool, str, int]:
+    # Ignored files can contain user secrets or generated artifacts. Treat them
+    # as protected data, so bulk cleanup never silently deletes them.
+    status_code, status = run(
+        ["git", "status", "--porcelain", "--ignored=matching", "--untracked-files=all"],
+        repo,
+        30,
+    )
+    if status_code != 0:
+        # Never delete a repository when Git could not determine its state.
+        raise HTTPException(409, "Cannot verify workspace changes")
+    branch_code, branch = run(["git", "branch", "--show-current"], repo, 30)
+    return bool(status.strip()), branch.strip() if branch_code == 0 else "", len(
+        [line for line in status.splitlines() if line.strip()]
+    )
+
+
+def list_workspace_summaries(limit: int = 100) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for wid, workdir in _valid_workspaces():
+        repo = workdir / "repo"
+        try:
+            dirty, branch, count = _workspace_git_state(repo)
+            rows.append({
+                "workspace_id": wid,
+                "branch": branch,
+                "has_changes": dirty,
+                "changed_files": count,
+                "updated_at": datetime.fromtimestamp(
+                    workdir.stat().st_mtime, tz=timezone.utc
+                ).isoformat(),
+            })
+        except (HTTPException, OSError):
+            continue
+    rows.sort(key=lambda row: row["updated_at"], reverse=True)
+    return rows[:limit]
+
+
+def delete_workspace(workspace_id: str, *, force: bool = False) -> None:
+    workdir = workspace_dir(workspace_id)
+    dirty, _, _ = _workspace_git_state(workdir / "repo")
+    if dirty and not force:
+        raise HTTPException(409, "Workspace has uncommitted changes; supply force=true to delete")
+    # The directory is a direct non-symlink child of the trusted workspace root.
+    shutil.rmtree(workdir)
+
+
+def cleanup_stale_workspaces(
+    max_age_hours: int, *, dry_run: bool = True, now: datetime | None = None
+) -> dict[str, list[str]]:
+    if not 1 <= max_age_hours <= 24 * 30:
+        raise ValueError("max_age_hours must be between 1 and 720")
+    current = now or datetime.now(timezone.utc)
+    cutoff = current.timestamp() - max_age_hours * 3600
+    result: dict[str, list[str]] = {"candidates": [], "deleted": [], "skipped_dirty": []}
+    for wid, workdir in _valid_workspaces():
+        try:
+            if workdir.stat().st_mtime >= cutoff:
+                continue
+            dirty, _, _ = _workspace_git_state(workdir / "repo")
+            if dirty:
+                result["skipped_dirty"].append(wid)
+                continue
+            result["candidates"].append(wid)
+            if not dry_run:
+                delete_workspace(wid)
+                result["deleted"].append(wid)
+        except (HTTPException, OSError):
+            # An invalid git state or disappeared directory must not be deleted.
+            continue
+    for names in result.values():
+        names.sort()
+    return result
+
+
+def commit_workspace(
+    repo: Path,
+    message: str,
+    author_name: str,
+    author_email: str,
+) -> dict[str, str]:
+    message = message.strip()
+    author_name = author_name.strip()
+    author_email = author_email.strip()
+    if not message:
+        raise HTTPException(400, "Commit message cannot be blank")
+    if not author_name:
+        raise HTTPException(400, "Commit author name cannot be blank")
+
+    code, status = run(["git", "status", "--porcelain"], repo, 30)
+    if code != 0:
+        raise HTTPException(500, f"Could not inspect workspace status: {status[-1500:]}")
+    if not status.strip():
+        raise HTTPException(400, "No workspace changes to commit")
+
+    code, output = run(["git", "add", "--all"], repo, 60)
+    if code != 0:
+        raise HTTPException(500, f"Could not stage workspace changes: {output[-1500:]}")
+
+    staged_code, staged_output = run(
+        ["git", "diff", "--cached", "--quiet"],
+        repo,
+        30,
+    )
+    if staged_code == 0:
+        raise HTTPException(400, "No workspace changes to commit")
+    if staged_code != 1:
+        raise HTTPException(
+            500,
+            f"Could not inspect staged changes: {staged_output[-1500:]}",
+        )
+
+    commit_code, commit_output = run(
+        [
+            "git",
+            "-c",
+            f"user.name={author_name}",
+            "-c",
+            f"user.email={author_email}",
+            "commit",
+            "-m",
+            message,
+        ],
+        repo,
+        120,
+    )
+    if commit_code != 0:
+        raise HTTPException(500, f"Git commit failed: {commit_output[-2000:]}")
+
+    sha_code, commit_sha = run(["git", "rev-parse", "HEAD"], repo, 30)
+    branch_code, branch = run(["git", "branch", "--show-current"], repo, 30)
+    if sha_code != 0 or branch_code != 0:
+        raise HTTPException(500, "Commit succeeded but Git metadata could not be read")
+
+    return {
+        "commit_sha": commit_sha.strip(),
+        "branch": branch.strip(),
+        "message": message,
+        "author_name": author_name,
+        "author_email": author_email,
+    }
 
 
 def github_headers() -> dict[str, str]:
@@ -460,6 +646,35 @@ async def workspace(req: WorkspaceRequest) -> dict[str, Any]:
     return {"workspace_id": req.workspace_id, "files": list_files(repo), "diff": build_patch(repo)}
 
 
+@app.post("/api/commit")
+async def commit(req: CommitRequest) -> dict[str, str]:
+    repo = workspace_repo(req.workspace_id)
+    return commit_workspace(
+        repo,
+        req.message,
+        req.author_name,
+        req.author_email,
+    )
+
+
+@app.get("/api/workspaces")
+async def workspaces() -> dict[str, Any]:
+    rows = list_workspace_summaries()
+    return {"workspaces": rows, "count": len(rows)}
+
+
+@app.delete("/api/workspaces/{workspace_id}")
+async def remove_workspace(workspace_id: str, force: bool = False) -> dict[str, Any]:
+    delete_workspace(workspace_id, force=force)
+    return {"workspace_id": workspace_id, "deleted": True}
+
+
+@app.post("/api/workspaces/cleanup")
+async def cleanup_workspaces(req: WorkspaceCleanupRequest) -> dict[str, Any]:
+    outcome = cleanup_stale_workspaces(req.max_age_hours, dry_run=req.dry_run)
+    return {**outcome, "dry_run": req.dry_run, "max_age_hours": req.max_age_hours}
+
+
 @app.get("/api/openapi-summary")
 async def openapi_summary() -> dict[str, Any]:
     return {
@@ -472,6 +687,8 @@ async def openapi_summary() -> dict[str, Any]:
             "test execution",
             "repair loop",
             "isolated branches",
+            "workspace commits",
+            "workspace inventory and safe cleanup",
             "GitHub issue import",
         ],
     }

@@ -1,5 +1,6 @@
 import asyncio
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,8 +10,10 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.main import (
+    CommitRequest,
     RunRequest,
     apply_edits,
+    commit_workspace,
     github_headers,
     health,
     parse_json_object,
@@ -122,6 +125,83 @@ class UtilitySafetyTests(unittest.TestCase):
 
             with patch("app.main.WORKSPACES", root):
                 self.assertEqual(workspace_repo("safe-id"), repo.resolve())
+
+    def test_commit_request_rejects_invalid_author_email(self) -> None:
+        with self.assertRaises(ValidationError):
+            CommitRequest(
+                workspace_id="safe-id",
+                message="feat: test",
+                author_email="not-an-email",
+            )
+
+    def test_commit_workspace_creates_real_commit_without_global_git_config(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            subprocess.run(
+                ["git", "init", "-b", "main"],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            (repo / "feature.txt").write_text("hello\n", encoding="utf-8")
+
+            result = commit_workspace(
+                repo,
+                "feat: add feature file",
+                "PatchPilot Test",
+                "patchpilot-test@example.com",
+            )
+
+            self.assertEqual(result["branch"], "main")
+            self.assertEqual(result["message"], "feat: add feature file")
+            self.assertEqual(len(result["commit_sha"]), 40)
+
+            log = subprocess.run(
+                ["git", "show", "-s", "--format=%an|%ae|%s", "HEAD"],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            ).stdout.strip()
+            self.assertEqual(
+                log,
+                "PatchPilot Test|patchpilot-test@example.com|feat: add feature file",
+            )
+            status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            ).stdout
+            self.assertEqual(status, "")
+
+    def test_commit_workspace_rejects_clean_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            subprocess.run(
+                ["git", "init", "-b", "main"],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+            with self.assertRaises(HTTPException) as context:
+                commit_workspace(
+                    repo,
+                    "feat: empty",
+                    "PatchPilot",
+                    "patchpilot@localhost",
+                )
+
+            self.assertEqual(context.exception.status_code, 400)
+            self.assertIn("No workspace changes", context.exception.detail)
 
     def test_github_headers_requires_token(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
