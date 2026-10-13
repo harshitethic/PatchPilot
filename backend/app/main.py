@@ -267,8 +267,9 @@ def apply_edits(repo: Path, payload: dict[str, Any]) -> tuple[bool, str]:
     edits = payload.get("edits")
     if not isinstance(edits, list):
         return False, "Model response missing edits array"
-    staged: list[tuple[Path, str]] = []
-    edited_paths: set[Path] = set()
+    # Validate every edit before writing any file. Sequential changes to one
+    # file use the previously staged contents, not the original on-disk text.
+    staged: dict[Path, str] = {}
     for i, edit in enumerate(edits):
         if not isinstance(edit, dict):
             return False, f"Edit {i+1} is not an object"
@@ -284,24 +285,24 @@ def apply_edits(repo: Path, payload: dict[str, Any]) -> tuple[bool, str]:
             return False, f"Edit {i+1} escapes repository: {rel}"
         if path.name == ".patchpilot.patch":
             return False, "Agent cannot modify PatchPilot control files"
-        if path in edited_paths:
-            return False, f"Duplicate edits to {rel} are not supported"
-        edited_paths.add(path)
         if not isinstance(old, str) or not isinstance(new, str):
             return False, f"Edit {i+1} requires string old/new values"
         if not path.exists() or not path.is_file():
             return False, f"File not found: {rel}"
-        try:
-            current = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            return False, f"Binary/non-text file is not editable: {rel}"
+        if path in staged:
+            current = staged[path]
+        else:
+            try:
+                current = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                return False, f"Binary/non-text file is not editable: {rel}"
         if current.count(old) != 1:
             return False, f"Expected exactly one match for old text in {rel}, found {current.count(old)}"
-        staged.append((path, current.replace(old, new, 1)))
+        staged[path] = current.replace(old, new, 1)
 
-    for path, content in staged:
+    for path, content in staged.items():
         path.write_text(content, encoding="utf-8")
-    return True, f"Applied {len(staged)} edit(s)"
+    return True, f"Applied {len(edits)} edit(s)"
 
 
 def build_patch(repo: Path) -> str:
