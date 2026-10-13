@@ -69,21 +69,50 @@ class WorkspaceCleanupRequest(BaseModel):
 
 
 class IssueRequest(BaseModel):
-    repo: str = Field(..., pattern=r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+    repo: str = Field(..., min_length=3, max_length=160)
     issue_number: int = Field(..., ge=1)
 
 
+ALLOWED_SUBPROCESS_TOOLS = frozenset({
+    "git", "pytest", "ruff", "mypy", "pyright",
+    "python", "python3", "npm", "pnpm", "yarn", "go", "cargo",
+})
+SENSITIVE_ENV_MARKERS = ("TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "API_KEY", "AUTH", "COOKIE")
+SENSITIVE_ENV_NAMES = frozenset({
+    "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "KUBECONFIG", "AWS_PROFILE",
+    "AWS_SHARED_CREDENTIALS_FILE", "GOOGLE_APPLICATION_CREDENTIALS",
+})
+
+
+def subprocess_environment() -> dict[str, str]:
+    """Do not forward host API keys or credential helper sockets to repo tests.
+
+    This is defense in depth, not a sandbox: the child still runs as the
+    current OS user and may be able to read other accessible files.
+    """
+    clean = {
+        key: value for key, value in os.environ.items()
+        if key.upper() not in SENSITIVE_ENV_NAMES
+        and not any(marker in key.upper() for marker in SENSITIVE_ENV_MARKERS)
+    }
+    clean["CI"] = "1"
+    return clean
+
+
 def run(cmd: list[str], cwd: Path, timeout: int = 120) -> tuple[int, str]:
+    if not cmd or cmd[0] not in ALLOWED_SUBPROCESS_TOOLS:
+        return 126, "Blocked unapproved executable"
     try:
         proc = subprocess.run(
             cmd,
             cwd=cwd,
+            shell=False,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             timeout=timeout,
             check=False,
-            env={**os.environ, "CI": "1"},
+            env=subprocess_environment(),
         )
         return proc.returncode, proc.stdout
     except subprocess.TimeoutExpired as exc:
@@ -508,6 +537,27 @@ def commit_workspace(
     }
 
 
+def github_issue_url(repo: str, issue_number: int) -> httpx.URL:
+    """Build API URLs with a fixed scheme/host and strictly bounded path data."""
+    if not isinstance(repo, str) or len(repo) > 160 or repo.count("/") != 1:
+        raise HTTPException(400, "repo must look like owner/name")
+    owner, name = repo.split("/", 1)
+    for part in (owner, name):
+        if (
+            not 1 <= len(part) <= 80
+            or part in {".", ".."}
+            or not all(char.isascii() and (char.isalnum() or char in "._-") for char in part)
+        ):
+            raise HTTPException(400, "Invalid GitHub repository name")
+    if not isinstance(issue_number, int) or not 1 <= issue_number <= 2**31 - 1:
+        raise HTTPException(400, "Invalid issue number")
+    return httpx.URL(
+        scheme="https",
+        host="api.github.com",
+        path=f"/repos/{owner}/{name}/issues/{issue_number}",
+    )
+
+
 def github_headers() -> dict[str, str]:
     token = os.getenv("GITHUB_TOKEN", "")
     if not token:
@@ -522,13 +572,11 @@ async def health() -> dict[str, str]:
 
 @app.get("/api/github/issue")
 async def get_issue(repo: str, issue_number: int) -> dict[str, Any]:
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
-        raise HTTPException(400, "repo must look like owner/name")
-    url = f"https://api.github.com/repos/{repo}/issues/{issue_number}"
+    url = github_issue_url(repo, issue_number)
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.get(url, headers=github_headers())
     if response.status_code >= 400:
-        raise HTTPException(response.status_code, f"GitHub issue request failed: {response.text[:1000]}")
+        raise HTTPException(response.status_code, "GitHub issue request failed")
     issue = response.json()
     return {
         "number": issue.get("number"),
@@ -543,11 +591,11 @@ async def get_issue(repo: str, issue_number: int) -> dict[str, Any]:
 
 @app.post("/api/import-issue")
 async def import_issue(req: IssueRequest) -> dict[str, Any]:
-    url = f"https://api.github.com/repos/{req.repo}/issues/{req.issue_number}"
+    url = github_issue_url(req.repo, req.issue_number)
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.get(url, headers=github_headers())
     if response.status_code >= 400:
-        raise HTTPException(response.status_code, f"GitHub issue request failed: {response.text[:1000]}")
+        raise HTTPException(response.status_code, "GitHub issue request failed")
     issue = response.json()
     title = issue.get("title", "Untitled issue")
     body = issue.get("body") or "No issue description provided."
