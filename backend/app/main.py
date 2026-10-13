@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from app.command_policy import parse_safe_command
+from app.sandbox import run_test_command
 
 APP_NAME = "PatchPilot"
 ROOT = Path(__file__).resolve().parents[2]
@@ -675,10 +676,10 @@ async def run_agent(req: RunRequest) -> dict[str, Any]:
     for iteration in range(1, req.max_iterations + 1):
         if not test_argv:
             break
-        test_code, test_output = run(test_argv, repo, 180)
+        test_code, test_output = run_test_command(test_argv, repo, 180)
         last_test_code, last_test_output = test_code, test_output
         history.append({"iteration": iteration, "action": "test", "returncode": test_code, "output": test_output[-5000:]})
-        if test_code == 0 or iteration >= req.max_iterations:
+        if test_code == 0 or test_code in {124, 125, 126} or iteration >= req.max_iterations:
             break
 
         current_context = read_repo_context(repo, list_files(repo))
@@ -704,6 +705,7 @@ async def run_agent(req: RunRequest) -> dict[str, Any]:
         "test_command": test_command,
         "tests_passed": bool(test_argv) and last_test_code == 0,
         "test_output": last_test_output[-12000:],
+        "test_execution_backend": "docker" if test_argv else None,
         "diff": diff_text,
         "history": history,
         "git_status": status.strip(),
@@ -717,8 +719,8 @@ async def execute(req: CommandRequest) -> dict[str, Any]:
         argv = parse_safe_command(req.command)
     except ValueError as exc:
         raise HTTPException(400, f"Command blocked by PatchPilot safety policy: {exc}") from exc
-    code, output = run(argv, repo, 180)
-    return {"returncode": code, "output": output[-12000:]}
+    code, output = run_test_command(argv, repo, 180)
+    return {"returncode": code, "output": output[-12000:], "execution_backend": "docker"}
 
 
 @app.post("/api/workspace")
