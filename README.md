@@ -454,6 +454,13 @@ requiring third-party packages need an **administrator-prepared offline
 test image** (e.g. `PATCHPILOT_IMAGE_PYTHON=your-org/approved-image@sha256:...`).
 Repository files and the model cannot select arbitrary images.
 
+**Private diagnostic logs:** The unauthenticated API returns only exit codes and
+a generic log notice; raw container output is appended to the local
+`.workspaces/<id>/test-output.log` with private file permissions, never
+included in a network response. Inspect these files from the host when
+debugging. Do not publish them; they may contain secrets printed by project
+tests.
+
 **Important limits:** Docker-based isolation is stronger than an executable
 allowlist but not a microVM, a proof of kernel confinement, or authentication.
 Cloning, Git actions and the agent backend still run on the local host. Keep

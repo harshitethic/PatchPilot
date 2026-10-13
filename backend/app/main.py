@@ -107,9 +107,10 @@ class IssueRequest(BaseModel):
     issue_number: int = Field(..., ge=1)
 
 
-ALLOWED_SUBPROCESS_TOOLS = frozenset({
-    "git", "pytest", "ruff", "mypy", "pyright",
-    "python", "python3", "npm", "pnpm", "yarn", "go", "cargo",
+# Host execution is reserved for the backend's own Git plumbing. Model-chosen
+# test runners are dispatched only through app.sandbox.run_test_command.
+HOST_GIT_SUBCOMMANDS = frozenset({
+    "clone", "branch", "switch", "status", "add", "diff", "rev-parse",
 })
 SENSITIVE_ENV_MARKERS = ("TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "API_KEY", "AUTH", "COOKIE")
 SENSITIVE_ENV_NAMES = frozenset({
@@ -127,6 +128,8 @@ def subprocess_environment() -> dict[str, str]:
     clean = {
         key: value for key, value in os.environ.items()
         if key.upper() not in SENSITIVE_ENV_NAMES
+        and not key.upper().startswith(("GIT_", "SSH_", "LD_", "DYLD_"))
+        and key.upper() not in {"NODE_OPTIONS", "PYTHONPATH", "PYTHONSTARTUP"}
         and not any(marker in key.upper() for marker in SENSITIVE_ENV_MARKERS)
     }
     clean["CI"] = "1"
@@ -134,8 +137,20 @@ def subprocess_environment() -> dict[str, str]:
 
 
 def run(cmd: list[str], cwd: Path, timeout: int = 120) -> tuple[int, str]:
-    if not cmd or cmd[0] not in ALLOWED_SUBPROCESS_TOOLS:
-        return 126, "Blocked unapproved executable"
+    if not cmd or cmd[0] != "git" or not all(isinstance(a, str) for a in cmd):
+        return 126, "Blocked non-Git host command"
+    if len(cmd) < 2 or not (
+        cmd[1] in HOST_GIT_SUBCOMMANDS
+        or (
+            len(cmd) == 8
+            and cmd[1] == "-c"
+            and cmd[2].startswith("user.name=")
+            and cmd[3] == "-c"
+            and cmd[4].startswith("user.email=")
+            and cmd[5:7] == ["commit", "-m"]
+        )
+    ):
+        return 126, "Blocked nonessential Git command"
     try:
         proc = subprocess.run(
             cmd,
@@ -154,6 +169,28 @@ def run(cmd: list[str], cwd: Path, timeout: int = 120) -> tuple[int, str]:
         if isinstance(output, bytes):
             output = output.decode("utf-8", errors="replace")
         return 124, output + "\n[command timed out]"
+
+
+def save_private_test_log(repo: Path, output: str) -> None:
+    """Write diagnostic output outside the repository, not through the API.
+
+    The backend's parent workspace is trusted; reject any pre-existing
+    symlink to avoid redirecting sensitive logs to attacker-chosen paths.
+    """
+    path = repo.parent / "test-output.log"
+    if path.is_symlink() or not repo.name == "repo":
+        return
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags, 0o600)
+        try:
+            os.write(fd, ("\n[isolated test result]\n" + output[-12000:] + "\n").encode("utf-8", errors="replace"))
+        finally:
+            os.close(fd)
+    except OSError:
+        # Logs must never change the execution verdict.
+        pass
 
 
 def validate_repository_url(value: str) -> str:
@@ -678,7 +715,13 @@ async def run_agent(req: RunRequest) -> dict[str, Any]:
             break
         test_code, test_output = run_test_command(test_argv, repo, 180)
         last_test_code, last_test_output = test_code, test_output
-        history.append({"iteration": iteration, "action": "test", "returncode": test_code, "output": test_output[-5000:]})
+        save_private_test_log(repo, test_output)
+        history.append({
+            "iteration": iteration,
+            "action": "test",
+            "returncode": test_code,
+            "output": "Raw test logs available only in the local private workspace log.",
+        })
         if test_code == 0 or test_code in {124, 125, 126} or iteration >= req.max_iterations:
             break
 
@@ -704,7 +747,7 @@ async def run_agent(req: RunRequest) -> dict[str, Any]:
         "touched_files": plan.get("touched_files", []),
         "test_command": test_command,
         "tests_passed": bool(test_argv) and last_test_code == 0,
-        "test_output": last_test_output[-12000:],
+        "test_output": "Raw test logs are not returned by the unauthenticated API.",
         "test_execution_backend": "docker" if test_argv else None,
         "diff": diff_text,
         "history": history,
@@ -720,7 +763,12 @@ async def execute(req: CommandRequest) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(400, f"Command blocked by PatchPilot safety policy: {exc}") from exc
     code, output = run_test_command(argv, repo, 180)
-    return {"returncode": code, "output": output[-12000:], "execution_backend": "docker"}
+    save_private_test_log(repo, output)
+    return {
+        "returncode": code,
+        "output": "Raw test logs are not returned by the unauthenticated API.",
+        "execution_backend": "docker",
+    }
 
 
 @app.post("/api/workspace")

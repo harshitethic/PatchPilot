@@ -122,6 +122,36 @@ class SandboxPolicyTests(unittest.TestCase):
         self.assertIn("timed out", output)
         self.assertEqual(cleanup.call_count, 1)
 
+    def test_host_git_runner_blocks_test_tools_even_when_called_directly(self):
+        from app.main import run
+        with patch("app.main.subprocess.run") as host:
+            with tempfile.TemporaryDirectory() as temp:
+                for command in (["pytest", "-q"], ["python", "-m", "unittest"], ["git", "config", "--global", "user.name", "bad"]):
+                    code, _ = run(command, Path(temp))
+                    self.assertEqual(code, 126)
+        host.assert_not_called()
+
+    def test_client_never_receives_raw_test_logs(self):
+        from app.main import save_private_test_log
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp) / "repo"
+            repo.mkdir()
+            with patch("app.main.workspace_repo", return_value=repo), patch(
+                "app.main.run_test_command",
+                return_value=(1, "Traceback: SECRET_API_TOKEN=private"),
+            ):
+                result = asyncio.run(execute(CommandRequest(
+                    workspace_id="safe-id", command="python -m unittest"
+                )))
+            self.assertEqual(result["returncode"], 1)
+            self.assertNotIn("SECRET_API_TOKEN", str(result))
+            path = Path(temp) / "test-output.log"
+            self.assertTrue(path.exists())
+            self.assertIn("Traceback", path.read_text())
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            save_private_test_log(repo, "second line")
+            self.assertIn("second line", path.read_text())
+
     def test_execute_endpoint_uses_container_not_local_run(self):
         with tempfile.TemporaryDirectory() as temp, patch(
             "app.main.workspace_repo", return_value=Path(temp)

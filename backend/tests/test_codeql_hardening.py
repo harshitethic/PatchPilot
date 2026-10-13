@@ -95,6 +95,8 @@ class SecurityBoundaryTests(unittest.TestCase):
             "AWS_SECRET_ACCESS_KEY": "SECRET_TEST_AWS",
             "SSH_AUTH_SOCK": "/private/key.sock",
             "PATH": "/usr/bin",
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "core.hooksPath",
         }):
             clean = subprocess_environment()
             self.assertEqual(clean.get("PATH"), "/usr/bin")
@@ -102,10 +104,11 @@ class SecurityBoundaryTests(unittest.TestCase):
             for name in ("OPENAI_API_KEY", "GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "SSH_AUTH_SOCK"):
                 self.assertNotIn(name, clean)
             with patch("app.main.subprocess.run") as called:
-                called.return_value = subprocess.CompletedProcess(["pytest"], 0, "ok")
-                rc, output = run(["pytest", "-q"], Path("."), 5)
+                called.return_value = subprocess.CompletedProcess(["git"], 0, "ok")
+                rc, output = run(["git", "status", "--porcelain"], Path("."), 5)
                 self.assertEqual((rc, output), (0, "ok"))
                 self.assertNotIn("GITHUB_TOKEN", called.call_args.kwargs["env"])
+                self.assertNotIn("GIT_CONFIG_COUNT", called.call_args.kwargs["env"])
                 self.assertFalse(called.call_args.kwargs["shell"])
 
     def test_generic_run_rejects_unknown_executable(self):
