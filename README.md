@@ -202,9 +202,20 @@ Use the planning stage as a fast first pass over an unfamiliar codebase before m
 | `/api/execute` | POST | Execute a command inside an existing workspace |
 | `/api/workspace` | POST | Inspect workspace files and current diff |
 | `/api/commit` | POST | Stage and commit the current workspace changes |
+| `/api/workspaces` | GET | List valid local workspaces with Git status |
+| `/api/workspaces/{workspace_id}` | DELETE | Delete a workspace (dirty workspaces require `force=true`) |
+| `/api/workspaces/cleanup` | POST | Preview or execute stale clean-workspace deletion |
 | `/api/github/issue` | GET | Fetch a GitHub issue |
 | `/api/import-issue` | POST | Convert a GitHub issue into an agent task |
 | `/api/openapi-summary` | GET | Return PatchPilot feature metadata |
+
+**Workspace cleanup safety:** `POST /api/workspaces/cleanup` with
+`{"max_age_hours":24}` only previews candidates by default. Explicitly send
+`{"max_age_hours":24,"dry_run":false}` to remove clean stale workspaces.
+Dirty workspaces and workspaces containing ignored files are always
+skipped by bulk cleanup, even with `dry_run=false`.
+Deletion refuses symlinked workspace directories and invalid identifiers.
+This is a local-only API: do not expose these endpoints to the public Internet.
 
 The FastAPI application also exposes its generated API documentation when the backend is running:
 
