@@ -66,18 +66,33 @@ class RepositoryBoundaryTests(unittest.TestCase):
             data = read_repo_context(repo, ["../private.txt", "linked/hidden.py"])
             self.assertNotIn("HOST_MARKER", data)
 
-    def test_duplicate_edits_rejected_atomically(self):
+    def test_sequential_edits_to_same_file_preserve_both_changes(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
-            (repo / "demo.py").write_text("original")
+            target = repo / "demo.py"
+            target.write_text("alpha beta gamma")
             edits = {"edits": [
-                {"path": "demo.py", "old": "original", "new": "first"},
-                {"path": "demo.py", "old": "original", "new": "second"},
+                {"path": "demo.py", "old": "alpha", "new": "one"},
+                {"path": "demo.py", "old": "gamma", "new": "three"},
+            ]}
+            ok, result = apply_edits(repo, edits)
+            self.assertTrue(ok, result)
+            self.assertEqual(result, "Applied 2 edit(s)")
+            self.assertEqual(target.read_text(), "one beta three")
+
+    def test_later_invalid_same_file_edit_leaves_original_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            target = repo / "demo.py"
+            target.write_text("alpha beta")
+            edits = {"edits": [
+                {"path": "demo.py", "old": "alpha", "new": "one"},
+                {"path": "demo.py", "old": "alpha", "new": "two"},
             ]}
             ok, reason = apply_edits(repo, edits)
             self.assertFalse(ok)
-            self.assertIn("Duplicate", reason)
-            self.assertEqual((repo / "demo.py").read_text(), "original")
+            self.assertIn("exactly one match", reason)
+            self.assertEqual(target.read_text(), "alpha beta")
 
     def test_workspace_id_rejects_dot_segments(self):
         with self.assertRaises(HTTPException) as exc:
