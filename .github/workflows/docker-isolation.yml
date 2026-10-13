@@ -1,0 +1,35 @@
+name: Docker isolation integration
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/docker-isolation.yml"
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/docker-isolation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: python -m pip install -r backend/requirements.txt
+      - name: Fetch administrator-approved runner image
+        run: docker pull python:3.12-slim-bookworm
+      - name: Verify live Docker isolation constraints
+        env:
+          OPENAI_API_KEY: "CI_ONLY_DUMMY_KEY_NEVER_FORWARDED"
+          GITHUB_TOKEN: "CI_ONLY_DUMMY_KEY_NEVER_FORWARDED"
+        run: PYTHONPATH=backend python -m unittest backend/tests/docker_smoke.py -v

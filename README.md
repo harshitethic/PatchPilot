@@ -59,7 +59,7 @@ It is designed to sit **between an issue and a pull request** — with the devel
 
 - 🧠 Repository-aware task planning
 - ✍️ Structured code/file editing instead of trusting raw model-generated diffs
-- 🧪 Automatic test-command detection and execution
+- 🧪 Automatic test-command detection with fail-closed, isolated Docker execution
 - 🔁 Limited repair loop when tests fail
 - 🌿 **Automatic isolated Git branch per run**
 - ✅ **Explicit workspace commit API with per-commit author identity**
@@ -69,7 +69,7 @@ It is designed to sit **between an issue and a pull request** — with the devel
 - 🏠 Local-first LLM support with Ollama
 - 🔌 OpenAI/OpenRouter-compatible provider support
 - ⚡ FastAPI backend + lightweight web UI
-- 🐳 Docker support for the backend
+- 🐳 Local Docker sandbox for test execution (requires a separate local Docker daemon)
 
 ---
 
@@ -420,23 +420,51 @@ without stronger isolation and authentication.
 
 ## 🔐 Security model
 
-PatchPilot is an **MVP and local developer tool**. Do not expose the current backend directly to the public internet.
+PatchPilot **does not execute repository test scripts on the host**. Model-
+selected commands and `POST /api/execute` are dispatched to a separate,
+ephemeral Docker container using the [isolation policy](backend/app/sandbox.py).
+If Docker or the approved test image is unavailable, test execution **fails
+closed** instead of falling back to local execution.
 
-The agent can clone repositories and execute detected project commands inside a workspace. Before using PatchPilot in an untrusted or multi-user environment, add:
+The container runner uses:
 
-- container or VM isolation
-- CPU, memory, disk, and execution-time limits
-- network isolation
-- authenticated API access
-- command and path allowlists
-- secret isolation
-- explicit human approval before write/push/PR actions
+- No network access, no capabilities, no privilege escalation, a non-root user
+  and a read-only root filesystem
+- Read-only bind mount of the current repository; no host HOME, credentials,
+  Docker socket, or parent workspace directories mounted
+- Bounded memory (512 MiB), CPU (1 core), process count (64), temporary disk
+  (64 MiB) and execution time (180 seconds by default)
+- Bounded log capture, forced container cleanup after timeout and a strict
+  command parser that never invokes a shell
+- Preloaded test images (`docker pull python:3.12-slim-bookworm` for Python);
+  `--pull=never` keeps runtime execution offline
 
-GitHub issue import also introduces a credential boundary: keep `GITHUB_TOKEN` server-side and use the minimum permissions required.
+**Quick check (local):**
 
-The project roadmap intentionally includes a stronger sandbox for this reason.
+```bash
+docker pull python:3.12-slim-bookworm
+python -m pip install -r backend/requirements.txt
+PYTHONPATH=backend python -m unittest backend.tests.test_sandbox -v
+```
 
----
+For deterministic live Docker boundary checks, CI executes
+[backend/tests/docker_smoke.py](backend/tests/docker_smoke.py) with a real
+container. Python `unittest` works in the base image. Project test suites
+requiring third-party packages need an **administrator-prepared offline
+test image** (e.g. `PATCHPILOT_IMAGE_PYTHON=your-org/approved-image@sha256:...`).
+Repository files and the model cannot select arbitrary images.
+
+**Important limits:** Docker-based isolation is stronger than an executable
+allowlist but not a microVM, a proof of kernel confinement, or authentication.
+Cloning, Git actions and the agent backend still run on the local host. Keep
+the backend loopback-only, do not mount the Docker socket into the backend
+container, and do not expose this unauthenticated tool on the public internet.
+The Compose backend is loopback-published for safety but does not have access
+to a Docker daemon, so test execution from Compose fails closed by default.
+
+See [security boundaries and threat model](docs/security-boundaries.md) and
+[the tracked isolation requirements](https://github.com/harshitethic/PatchPilot/issues/23).
+
 
 ## 🗺️ Roadmap
 
@@ -462,7 +490,8 @@ The project roadmap intentionally includes a stronger sandbox for this reason.
 - [ ] GitHub App authentication
 - [ ] Streaming agent events
 - [ ] File-aware tool calling
-- [ ] Strong sandboxing with Docker / microVMs
+- [x] Fail-closed isolated Docker test runner with resource limits and CI smoke tests
+- [ ] Hardened multi-tenant microVM isolation, auth and deployment threat review
 - [ ] Human approval gates
 - [ ] Persistent runs and history
 - [ ] CLI: `patchpilot run "Fix the auth bug"`
