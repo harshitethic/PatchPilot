@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -60,6 +61,11 @@ class CommitRequest(BaseModel):
         max_length=254,
         pattern=r"^[^@\s]+@[^@\s]+$",
     )
+
+
+class WorkspaceCleanupRequest(BaseModel):
+    max_age_hours: int = Field(default=24, ge=1, le=24 * 30)
+    dry_run: bool = True
 
 
 class IssueRequest(BaseModel):
@@ -321,18 +327,117 @@ def model_error_preview(raw: str) -> str:
     return (raw or "").strip()[-3000:]
 
 
-def workspace_repo(workspace_id: str) -> Path:
-    if not re.fullmatch(r"[a-zA-Z0-9_-]{6,64}", workspace_id):
+WORKSPACE_ID_PATTERN = re.compile(r"[a-zA-Z0-9_-]{6,64}")
+
+
+def workspace_dir(workspace_id: str) -> Path:
+    """Resolve only a direct, non-symlink workspace directory."""
+    if not WORKSPACE_ID_PATTERN.fullmatch(workspace_id):
         raise HTTPException(400, "Invalid workspace id")
     root = WORKSPACES.resolve()
-    repo = (root / workspace_id / "repo").resolve()
-    try:
-        repo.relative_to(root)
-    except ValueError as exc:
-        raise HTTPException(400, "Invalid workspace id") from exc
-    if not repo.is_dir():
+    workdir = root / workspace_id
+    if workdir.is_symlink():
+        raise HTTPException(400, "Workspace symlinks are not allowed")
+    if not workdir.is_dir() or workdir.resolve() != workdir:
         raise HTTPException(404, "Workspace not found")
-    return repo
+    repo = workdir / "repo"
+    if repo.is_symlink() or not repo.is_dir() or not repo.resolve().is_relative_to(workdir):
+        raise HTTPException(404, "Workspace repository not found")
+    return workdir
+
+
+def workspace_repo(workspace_id: str) -> Path:
+    return workspace_dir(workspace_id) / "repo"
+
+
+def _valid_workspaces() -> list[tuple[str, Path]]:
+    root = WORKSPACES.resolve()
+    if not root.exists():
+        return []
+    workdirs: list[tuple[str, Path]] = []
+    for entry in root.iterdir():
+        if entry.is_symlink() or not WORKSPACE_ID_PATTERN.fullmatch(entry.name):
+            continue
+        try:
+            workdirs.append((entry.name, workspace_dir(entry.name)))
+        except (HTTPException, OSError):
+            continue
+    return workdirs
+
+
+def _workspace_git_state(repo: Path) -> tuple[bool, str, int]:
+    # Ignored files can contain user secrets or generated artifacts. Treat them
+    # as protected data, so bulk cleanup never silently deletes them.
+    status_code, status = run(
+        ["git", "status", "--porcelain", "--ignored=matching", "--untracked-files=all"],
+        repo,
+        30,
+    )
+    if status_code != 0:
+        # Never delete a repository when Git could not determine its state.
+        raise HTTPException(409, "Cannot verify workspace changes")
+    branch_code, branch = run(["git", "branch", "--show-current"], repo, 30)
+    return bool(status.strip()), branch.strip() if branch_code == 0 else "", len(
+        [line for line in status.splitlines() if line.strip()]
+    )
+
+
+def list_workspace_summaries(limit: int = 100) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for wid, workdir in _valid_workspaces():
+        repo = workdir / "repo"
+        try:
+            dirty, branch, count = _workspace_git_state(repo)
+            rows.append({
+                "workspace_id": wid,
+                "branch": branch,
+                "has_changes": dirty,
+                "changed_files": count,
+                "updated_at": datetime.fromtimestamp(
+                    workdir.stat().st_mtime, tz=timezone.utc
+                ).isoformat(),
+            })
+        except (HTTPException, OSError):
+            continue
+    rows.sort(key=lambda row: row["updated_at"], reverse=True)
+    return rows[:limit]
+
+
+def delete_workspace(workspace_id: str, *, force: bool = False) -> None:
+    workdir = workspace_dir(workspace_id)
+    dirty, _, _ = _workspace_git_state(workdir / "repo")
+    if dirty and not force:
+        raise HTTPException(409, "Workspace has uncommitted changes; supply force=true to delete")
+    # The directory is a direct non-symlink child of the trusted workspace root.
+    shutil.rmtree(workdir)
+
+
+def cleanup_stale_workspaces(
+    max_age_hours: int, *, dry_run: bool = True, now: datetime | None = None
+) -> dict[str, list[str]]:
+    if not 1 <= max_age_hours <= 24 * 30:
+        raise ValueError("max_age_hours must be between 1 and 720")
+    current = now or datetime.now(timezone.utc)
+    cutoff = current.timestamp() - max_age_hours * 3600
+    result: dict[str, list[str]] = {"candidates": [], "deleted": [], "skipped_dirty": []}
+    for wid, workdir in _valid_workspaces():
+        try:
+            if workdir.stat().st_mtime >= cutoff:
+                continue
+            dirty, _, _ = _workspace_git_state(workdir / "repo")
+            if dirty:
+                result["skipped_dirty"].append(wid)
+                continue
+            result["candidates"].append(wid)
+            if not dry_run:
+                delete_workspace(wid)
+                result["deleted"].append(wid)
+        except (HTTPException, OSError):
+            # An invalid git state or disappeared directory must not be deleted.
+            continue
+    for names in result.values():
+        names.sort()
+    return result
 
 
 def commit_workspace(
@@ -552,6 +657,24 @@ async def commit(req: CommitRequest) -> dict[str, str]:
     )
 
 
+@app.get("/api/workspaces")
+async def workspaces() -> dict[str, Any]:
+    rows = list_workspace_summaries()
+    return {"workspaces": rows, "count": len(rows)}
+
+
+@app.delete("/api/workspaces/{workspace_id}")
+async def remove_workspace(workspace_id: str, force: bool = False) -> dict[str, Any]:
+    delete_workspace(workspace_id, force=force)
+    return {"workspace_id": workspace_id, "deleted": True}
+
+
+@app.post("/api/workspaces/cleanup")
+async def cleanup_workspaces(req: WorkspaceCleanupRequest) -> dict[str, Any]:
+    outcome = cleanup_stale_workspaces(req.max_age_hours, dry_run=req.dry_run)
+    return {**outcome, "dry_run": req.dry_run, "max_age_hours": req.max_age_hours}
+
+
 @app.get("/api/openapi-summary")
 async def openapi_summary() -> dict[str, Any]:
     return {
@@ -565,6 +688,7 @@ async def openapi_summary() -> dict[str, Any]:
             "repair loop",
             "isolated branches",
             "workspace commits",
+            "workspace inventory and safe cleanup",
             "GitHub issue import",
         ],
     }
