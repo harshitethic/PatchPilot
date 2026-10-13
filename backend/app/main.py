@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -68,8 +69,33 @@ def run(cmd: list[str], cwd: Path, timeout: int = 120) -> tuple[int, str]:
         )
         return proc.returncode, proc.stdout
     except subprocess.TimeoutExpired as exc:
-        out = (exc.stdout or "") + "\n[command timed out]"
-        return 124, out
+        output = exc.stdout or b""
+        if isinstance(output, bytes):
+            output = output.decode("utf-8", errors="replace")
+        return 124, output + "\n[command timed out]"
+
+
+def validate_repository_url(value: str) -> str:
+    """Limit Git clone to canonical HTTPS GitHub owner/repository URLs."""
+    try:
+        parts = urlsplit(value.strip())
+        if (parts.scheme != "https" or parts.hostname not in {"github.com", "www.github.com"}
+                or parts.port is not None or parts.username is not None or parts.password is not None
+                or parts.query or parts.fragment):
+            raise ValueError("Only GitHub HTTPS repository URLs are supported.")
+    except ValueError as exc:
+        raise ValueError("Only GitHub HTTPS repository URLs are supported.") from exc
+
+    segments = parts.path.strip("/").split("/")
+    if len(segments) != 2:
+        raise ValueError("Expected https://github.com/owner/repository")
+    owner, name = segments
+    if name.endswith(".git"):
+        name = name[:-4]
+    if any(part in {".", ".."} or not re.fullmatch(r"[A-Za-z0-9_.-]+", part)
+           for part in (owner, name)):
+        raise ValueError("Invalid GitHub repository owner or name")
+    return f"https://github.com/{owner}/{name}.git"
 
 
 def safe_repo_name(url: str) -> str:
@@ -84,10 +110,14 @@ def safe_branch_name(name: str) -> str:
 
 
 def clone_repo(repo_url: str) -> tuple[str, Path]:
+    try:
+        safe_url = validate_repository_url(repo_url)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     workspace_id = next(tempfile._get_candidate_names())
     workdir = WORKSPACES / workspace_id
     workdir.mkdir(parents=True, exist_ok=False)
-    code, out = run(["git", "clone", "--depth", "1", repo_url, str(workdir / "repo")], ROOT, 180)
+    code, out = run(["git", "clone", "--depth", "1", "--", safe_url, str(workdir / "repo")], ROOT, 180)
     if code != 0:
         shutil.rmtree(workdir, ignore_errors=True)
         raise HTTPException(400, f"Git clone failed: {out[-2000:]}")
@@ -98,9 +128,11 @@ def list_files(repo: Path, limit: int = 350) -> list[str]:
     ignored = {".git", "node_modules", ".venv", "venv", "dist", "build", "__pycache__", ".next", "coverage", ".cache"}
     results: list[str] = []
     for p in repo.rglob("*"):
-        if any(part in ignored for part in p.parts):
+        if any(part in ignored for part in p.relative_to(repo).parts):
             continue
-        if p.is_file():
+        if p.is_symlink():
+            continue
+        if p.is_file() and p.resolve().is_relative_to(repo.resolve()):
             results.append(str(p.relative_to(repo)).replace("\\", "/"))
             if len(results) >= limit:
                 break
@@ -113,9 +145,18 @@ def read_repo_context(repo: Path, files: list[str], limit_chars: int = 65000) ->
     ordered = sorted(files, key=lambda f: (Path(f).name not in preferred_names, Path(f).suffix not in preferred_ext, len(f)))
     chunks: list[str] = []
     total = 0
+    root = repo.resolve()
     for rel in ordered[:100]:
+        if Path(rel).is_absolute() or ".." in Path(rel).parts:
+            continue
+        path = repo / rel
+        # Reject symlinks at any level, including symlinked parent directories.
+        if path.is_symlink() or not path.resolve().is_relative_to(root):
+            continue
+        if any(part.is_symlink() for part in path.parents if part != root and part.is_relative_to(root)):
+            continue
         try:
-            text = (repo / rel).read_text(encoding="utf-8", errors="ignore")
+            text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
         if len(text) > 7000:
@@ -215,6 +256,7 @@ def apply_edits(repo: Path, payload: dict[str, Any]) -> tuple[bool, str]:
     if not isinstance(edits, list):
         return False, "Model response missing edits array"
     staged: list[tuple[Path, str]] = []
+    edited_paths: set[Path] = set()
     for i, edit in enumerate(edits):
         if not isinstance(edit, dict):
             return False, f"Edit {i+1} is not an object"
@@ -230,6 +272,9 @@ def apply_edits(repo: Path, payload: dict[str, Any]) -> tuple[bool, str]:
             return False, f"Edit {i+1} escapes repository: {rel}"
         if path.name == ".patchpilot.patch":
             return False, "Agent cannot modify PatchPilot control files"
+        if path in edited_paths:
+            return False, f"Duplicate edits to {rel} are not supported"
+        edited_paths.add(path)
         if not isinstance(old, str) or not isinstance(new, str):
             return False, f"Edit {i+1} requires string old/new values"
         if not path.exists() or not path.is_file():
@@ -264,6 +309,8 @@ def model_error_preview(raw: str) -> str:
 
 
 def workspace_repo(workspace_id: str) -> Path:
+    if not re.fullmatch(r"[a-zA-Z0-9_-]{6,64}", workspace_id):
+        raise HTTPException(400, "Invalid workspace id")
     root = WORKSPACES.resolve()
     repo = (root / workspace_id / "repo").resolve()
     try:
