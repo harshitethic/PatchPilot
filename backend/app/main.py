@@ -151,17 +151,37 @@ def run(cmd: list[str], cwd: Path, timeout: int = 120) -> tuple[int, str]:
         )
     ):
         return 126, "Blocked nonessential Git command"
+    # Ignore system/user Git config and repository-specified hooks/fsmonitor
+    # so cloned projects cannot turn backend Git plumbing into code execution.
+    # Keep the program static and supply all user parameters as argv, never
+    # through an interpolated shell command.
+    git_env = subprocess_environment()
+    git_env.update({
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_TERMINAL_PROMPT": "0",
+    })
+    git_argv = [
+        "git",
+        "-c", f"core.hooksPath={os.devnull}",
+        "-c", "core.fsmonitor=false",
+        "-c", "credential.helper=",
+        "-c", "protocol.file.allow=never",
+        "-c", "protocol.ext.allow=never",
+        *cmd[1:],
+    ]
     try:
         proc = subprocess.run(
-            cmd,
+            git_argv,
             cwd=cwd,
+            stdin=subprocess.DEVNULL,
             shell=False,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             timeout=timeout,
             check=False,
-            env=subprocess_environment(),
+            env=git_env,
         )
         return proc.returncode, proc.stdout
     except subprocess.TimeoutExpired as exc:
@@ -389,6 +409,10 @@ def apply_edits(repo: Path, payload: dict[str, Any]) -> tuple[bool, str]:
             path.relative_to(repo.resolve())
         except ValueError:
             return False, f"Edit {i+1} escapes repository: {rel}"
+        # Git control files are not tracked source and must never be edited by
+        # model-generated patches, even if the model guesses their contents.
+        if ".git" in (part.lower() for part in Path(rel).parts):
+            return False, "Agent cannot modify Git control files"
         if path.name == ".patchpilot.patch":
             return False, "Agent cannot modify PatchPilot control files"
         if not isinstance(old, str) or not isinstance(new, str):
