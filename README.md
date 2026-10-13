@@ -405,6 +405,19 @@ The frontend can be served locally with a lightweight Python HTTP server.
 
 ![PatchPilot frontend](docs/screenshots/04-local-frontend.png)
 
+### Browser origin restrictions
+
+The backend accepts cross-origin browser calls from the local development UIs
+(`http://localhost:5500` and `http://localhost:5173`, including their
+`127.0.0.1` equivalents). It does **not** use wildcard CORS or credentialed
+cross-origin requests. For a different trusted frontend, set
+`PATCHPILOT_ALLOWED_ORIGINS=https://trusted.example` (comma-separated for
+multiple origins). Insecure non-local HTTP origins and wildcards are rejected.
+
+**CORS is not authentication or a sandbox.** Keep the backend bound to
+`127.0.0.1`; do not expose it to arbitrary users or host untrusted projects
+without stronger isolation and authentication.
+
 ## 🔐 Security model
 
 PatchPilot is an **MVP and local developer tool**. Do not expose the current backend directly to the public internet.

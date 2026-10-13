@@ -23,11 +23,44 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKSPACES = ROOT / ".workspaces"
 WORKSPACES.mkdir(exist_ok=True)
 
+DEFAULT_ALLOWED_ORIGINS = (
+    "http://127.0.0.1:5500", "http://localhost:5500",
+    "http://127.0.0.1:5173", "http://localhost:5173",
+)
+
+
+def allowed_browser_origins() -> list[str]:
+    """Accept explicitly configured browser origins, never a wildcard."""
+    origins = list(DEFAULT_ALLOWED_ORIGINS)
+    for value in os.getenv("PATCHPILOT_ALLOWED_ORIGINS", "").split(","):
+        origin = value.strip().rstrip("/")
+        if not origin:
+            continue
+        try:
+            parsed = urlsplit(origin)
+            host = parsed.hostname
+            if (
+                parsed.scheme not in {"http", "https"} or not host
+                or parsed.username or parsed.password or parsed.query or parsed.fragment
+                or parsed.path or origin == "*" or "*" in origin
+                or (parsed.scheme == "http" and host not in {"127.0.0.1", "localhost"})
+            ):
+                raise ValueError("Invalid CORS origin")
+        except ValueError as exc:
+            raise ValueError(
+                "PATCHPILOT_ALLOWED_ORIGINS must contain valid trusted HTTPS origins "
+                "or local HTTP origins (localhost/127.0.0.1)"
+            ) from exc
+        if origin not in origins:
+            origins.append(origin)
+    return origins
+
+
 app = FastAPI(title=APP_NAME, version="0.4.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=allowed_browser_origins(),
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

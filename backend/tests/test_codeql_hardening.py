@@ -10,6 +10,7 @@ import httpx
 from fastapi import HTTPException
 
 from app.main import (
+    allowed_browser_origins,
     get_issue,
     github_issue_url,
     import_issue,
@@ -20,6 +21,28 @@ from app.main import (
 
 
 class SecurityBoundaryTests(unittest.TestCase):
+    def test_cors_defaults_restrict_browser_origins(self):
+        with patch.dict(os.environ, {}, clear=True):
+            origins = allowed_browser_origins()
+        self.assertNotIn("*", origins)
+        self.assertIn("http://localhost:5500", origins)
+        self.assertIn("http://127.0.0.1:5173", origins)
+        self.assertFalse(any("evil" in origin for origin in origins))
+
+    def test_custom_cors_origins_validate_scheme_host_and_wildcards(self):
+        with patch.dict(os.environ, {
+            "PATCHPILOT_ALLOWED_ORIGINS": "https://trusted.example, http://localhost:3000"
+        }):
+            origins = allowed_browser_origins()
+        self.assertIn("https://trusted.example", origins)
+        self.assertIn("http://localhost:3000", origins)
+        for unsafe in ("*", "http://evil.example", "file:///tmp/index.html",
+                       "https://user:pass@example.com", "https://x.example/extra"):
+            with self.subTest(unsafe=unsafe), patch.dict(
+                os.environ, {"PATCHPILOT_ALLOWED_ORIGINS": unsafe}
+            ), self.assertRaises(ValueError):
+                allowed_browser_origins()
+
     def test_github_issue_url_host_never_depends_on_repo_input(self):
         url = github_issue_url("owner/repo-name", 42)
         self.assertEqual(url.scheme, "https")
