@@ -454,6 +454,14 @@ requiring third-party packages need an **administrator-prepared offline
 test image** (e.g. `PATCHPILOT_IMAGE_PYTHON=your-org/approved-image@sha256:...`).
 Repository files and the model cannot select arbitrary images.
 
+**Host Git boundary:** Model-generated source edits cannot touch internal Git
+control files. Backend Git commands ignore repository hooks, filesystem
+monitor helpers, system/global Git config, credential helpers and unsafe
+transport protocols. The trusted Git binary receives argv directly without
+a shell. Regression tests verify that an executable hostile pre-commit hook
+cannot run during the commit workflow. This is separate from the Docker
+sandbox for project test commands.
+
 **Private diagnostic logs:** The unauthenticated API returns only exit codes and
 a generic log notice; raw container output is appended to the local
 `.workspaces/<id>/test-output.log` with private file permissions, never

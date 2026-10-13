@@ -14,7 +14,26 @@ trusted security principal.
 | Repository text | Untrusted | Symlink containment, bounded context, plan/edit validation |
 | Model-produced test commands | Untrusted | Strict parser; **Docker test runner only** |
 | Test container | Potentially hostile | No network, non-root, read-only source/root, resource caps, no host credentials/socket |
+| Host Git plumbing | Trusted backend, untrusted repository contents | Static Git executable, bounded Git commands, system/global config disabled, hooks/fsmonitor disabled, terminal prompt disabled |
 | Container image | Trusted by administrator | Static profile-based images, optional admin-configured OCI image, offline pull policy |
+
+## Git hook and configuration boundaries
+
+The backend still performs Git clone, status, staging and local commits on the
+host. Unlike third-party test runners, these operations require host-side Git
+plumbing for the local developer workflow. Commands are passed as structured
+argv with no shell; the backend ignores inherited GIT_ variables, system/global
+Git configuration, repository-specified hooks and fsmonitor helpers. Credential
+helpers and file/ext transport protocols are disabled for these operations.
+
+The agent is also forbidden from applying source-code patches to paths under
+the repository's internal .git control directory. An adversarial regression
+test creates an executable pre-commit hook and malicious Git configuration,
+executes the allowed commit flow and verifies that the hook never runs.
+
+This is defense in depth, **not a replacement for daemon isolation,
+authentication, URL validation, resource quotas or independent audit**. The
+CodeQL command-line finding remains open for further review.
 
 ## Live verification
 

@@ -110,6 +110,10 @@ class SecurityBoundaryTests(unittest.TestCase):
                 self.assertNotIn("GITHUB_TOKEN", called.call_args.kwargs["env"])
                 self.assertNotIn("GIT_CONFIG_COUNT", called.call_args.kwargs["env"])
                 self.assertFalse(called.call_args.kwargs["shell"])
+                self.assertEqual(called.call_args.args[0][0:3], ["git", "-c", f"core.hooksPath={os.devnull}"])
+                self.assertEqual(called.call_args.kwargs["env"]["GIT_CONFIG_NOSYSTEM"], "1")
+                self.assertEqual(called.call_args.kwargs["env"]["GIT_CONFIG_GLOBAL"], os.devnull)
+                self.assertEqual(called.call_args.kwargs["stdin"], subprocess.DEVNULL)
 
     def test_generic_run_rejects_unknown_executable(self):
         with patch("app.main.subprocess.run") as called:
