@@ -137,7 +137,7 @@ Content-Type: application/json
 }
 ```
 
-The endpoint stages the workspace with `git add --all`, refuses clean workspaces, creates the commit without modifying global Git identity, and returns the commit SHA and branch.
+The endpoint stages the workspace with `git add --all`, refuses clean workspaces, checks staged sensitive paths and recognizable credential signatures **before** committing, then creates the commit without modifying global Git identity. If a safety check refuses a commit, files and staging are preserved for review; no Git history is rewritten. See [the verified commit-safety limitations](docs/commit-safety.md).
 
 **Important:** branches and commits still exist only inside PatchPilot's cloned workspace. PatchPilot does **not** push to GitHub yet, so remote pull requests remain future roadmap work.
 
