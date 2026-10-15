@@ -16,6 +16,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from app.access_control import ApiAccessMiddleware
 from app.command_policy import parse_safe_command
 from app.sandbox import run_test_command
 
@@ -58,6 +59,9 @@ def allowed_browser_origins() -> list[str]:
 
 
 app = FastAPI(title=APP_NAME, version="0.4.0")
+# Access checks run before route handlers. CORS wraps the access middleware
+# so a trusted local browser can see a 401 when its bearer token is missing.
+app.add_middleware(ApiAccessMiddleware, allowed_origins=allowed_browser_origins)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_browser_origins(),

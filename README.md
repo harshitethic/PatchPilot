@@ -405,6 +405,29 @@ The frontend can be served locally with a lightweight Python HTTP server.
 
 ![PatchPilot frontend](docs/screenshots/04-local-frontend.png)
 
+### Local-only API and optional token authentication
+
+PatchPilot's HTTP API is loopback-only by default: without a configured
+secret, requests must originate from a loopback IP and present a local Host
+header. Untrusted browser Origins are rejected for all request methods,
+including workspace deletion. CORS alone is not authentication.
+
+To enable an optional token:
+
+~~~bash
+export PATCHPILOT_API_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+~~~
+
+Every endpoint then requires a Bearer authorization header. The local
+frontend accepts an optional password-style API token input without
+saving it to cookies or localStorage. Tokens must be generated randomly,
+kept private, and never checked into Git. This is single-user shared-secret
+authentication, not independent tenant isolation or public SaaS readiness.
+
+See the [access-control threat model](docs/api-access-control.md) for
+reproducible HTTP tests, HTTPS deployment constraints, and remaining risks.
+
 ### Browser origin restrictions
 
 The backend accepts cross-origin browser calls from the local development UIs
@@ -462,7 +485,7 @@ a shell. Regression tests verify that an executable hostile pre-commit hook
 cannot run during the commit workflow. This is separate from the Docker
 sandbox for project test commands.
 
-**Private diagnostic logs:** The unauthenticated API returns only exit codes and
+**Private diagnostic logs:** The API returns only exit codes and
 a generic log notice; raw container output is appended to the local
 `.workspaces/<id>/test-output.log` with private file permissions, never
 included in a network response. Inspect these files from the host when
