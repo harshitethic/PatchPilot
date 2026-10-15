@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from app.access_control import ApiAccessMiddleware
 from app.command_policy import parse_safe_command
 from app.commit_guard import contains_secret_signature, is_sensitive_path, staged_commit_risk
+from app.model_transport import model_content, request_model_json
 from app.sandbox import run_test_command
 
 APP_NAME = "PatchPilot"
@@ -344,14 +345,8 @@ async def ask_model(provider: str, model: str, system: str, user: str) -> str:
         if provider == "openrouter":
             headers["HTTP-Referer"] = os.getenv("APP_URL", "http://localhost:5173")
 
-    async with httpx.AsyncClient(timeout=240) as client:
-        response = await client.post(url, headers=headers, json=payload)
-        if response.status_code >= 400:
-            # Provider error bodies can echo prompts, API keys and account
-            # metadata. Do not forward the raw remote response to API clients.
-            raise HTTPException(502, f"Model provider request failed (HTTP {response.status_code})")
-        data = response.json()
-    return data.get("message", {}).get("content") or data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    data = await request_model_json(url, headers, payload)
+    return model_content(data, provider)
 
 
 PLANNER = """You are PatchPilot, an open-source AI software engineer.

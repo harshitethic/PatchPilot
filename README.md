@@ -202,6 +202,12 @@ forwarding raw provider error responses. These guards are **not complete DLP**
 and do not replace consent before sending private source to OpenAI or
 OpenRouter. See the [reproducible privacy tests and limitations](docs/model-context-privacy.md).
 
+Model calls also enforce **1 MiB outbound JSON, 2 MiB streamed responses and
+a 240-second total network deadline**. Compressed bodies, malformed responses
+and provider errors fail with sanitized API messages; cancellation closes
+the connection. [Transport limits and offline integration tests](docs/model-provider-limits.md)
+document the policy, compatibility trade-offs and remaining resource gaps.
+
 ## 🔌 API
 
 | Endpoint | Method | Purpose |
