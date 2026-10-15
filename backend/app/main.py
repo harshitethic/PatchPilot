@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from app.access_control import ApiAccessMiddleware
 from app.command_policy import parse_safe_command
+from app.commit_guard import staged_commit_risk
 from app.sandbox import run_test_command
 
 APP_NAME = "PatchPilot"
@@ -603,6 +604,16 @@ def commit_workspace(
         raise HTTPException(
             500,
             f"Could not inspect staged changes: {staged_output[-1500:]}",
+        )
+
+    # Stage exactly as before, then refuse high-confidence credential leaks
+    # before creating Git history. Files and index are left for local review;
+    # never send candidate keys or Git diffs to an API caller.
+    risk = staged_commit_risk(repo, run)
+    if risk is not None:
+        raise HTTPException(
+            409,
+            f"Commit refused: {risk}. Files are unchanged; review the staged changes locally.",
         )
 
     commit_code, commit_output = run(
