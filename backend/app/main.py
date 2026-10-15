@@ -463,6 +463,17 @@ def model_error_preview(raw: str) -> str:
     return (raw or "").strip()[-3000:]
 
 
+def model_test_diagnostics(output: str) -> str:
+    """Apply the source-context signature policy before truncating diagnostics.
+
+    Keep the existing bounded output tail in the private local test log. Omitting the whole
+    diagnostic avoids leaving adjacent credential material in the model prompt.
+    """
+    if contains_secret_signature(output):
+        return "Test output omitted because it contains a recognizable credential pattern. Review the private local test log."
+    return output[-12000:]
+
+
 WORKSPACE_ID_PATTERN = re.compile(r"[a-zA-Z0-9_-]{6,64}")
 
 
@@ -772,8 +783,11 @@ async def run_agent(req: RunRequest) -> dict[str, Any]:
             break
 
         current_context = read_repo_context(repo, list_files(repo))
-        current_diff = build_patch(repo)
-        repair_input = f"TASK:\n{req.task}\n\nCURRENT DIFF:\n{current_diff}\n\nTEST OUTPUT:\n{test_output[-12000:]}\n\nCURRENT REPOSITORY CONTEXT:\n{current_context}"
+        # A raw Git diff can contain deleted/adjacent credentials or files that
+        # read_repo_context deliberately excluded. Use filtered current source
+        # for repairs; retain the full diff only for the local caller's review.
+        diagnostics = model_test_diagnostics(test_output)
+        repair_input = f"TASK:\n{req.task}\n\nTEST RETURN CODE: {test_code}\n\nTEST OUTPUT:\n{diagnostics}\n\nCURRENT REPOSITORY CONTEXT:\n{current_context}"
         repair_raw = await ask_model(req.provider, req.model, REPAIRER, repair_input)
         repair_edits = extract_model_edits(repair_raw)
         ok, repair_output = apply_edits(repo, repair_edits)
