@@ -33,7 +33,7 @@ _SIGNATURES = (
 )
 
 
-def _private_path(path: str) -> bool:
+def is_sensitive_path(path: str) -> bool:
     parts = tuple(component.lower() for component in PurePosixPath(path).parts)
     if not parts:
         return False
@@ -49,6 +49,11 @@ def _private_path(path: str) -> bool:
     return PurePosixPath(name).suffix in _BLOCKED_EXTENSIONS
 
 
+def contains_secret_signature(content: str) -> bool:
+    """Detect a limited set of recognizable credential patterns, not all secrets."""
+    return any(signature.search(content) for signature in _SIGNATURES)
+
+
 def staged_commit_risk(repo, git_run: Callable) -> str | None:
     """Return a generic reason without exposing secrets in any error message.
 
@@ -62,7 +67,7 @@ def staged_commit_risk(repo, git_run: Callable) -> str | None:
     if code != 0:
         return "Cannot verify staged filenames"
     for path in names.split("\0"):
-        if path and _private_path(path):
+        if path and is_sensitive_path(path):
             return "Sensitive filename is staged"
 
     code, diff = git_run(
@@ -74,6 +79,6 @@ def staged_commit_risk(repo, git_run: Callable) -> str | None:
 
     for line in diff.splitlines():
         if line.startswith("+") and not line.startswith("+++"):
-            if any(signature.search(line) for signature in _SIGNATURES):
+            if contains_secret_signature(line):
                 return "Potential credential detected in staged additions"
     return None
