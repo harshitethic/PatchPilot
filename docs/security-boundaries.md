@@ -81,3 +81,17 @@ socket, rootful containers, host network or host home directory.
 See [security issue #23](https://github.com/harshitethic/PatchPilot/issues/23)
 for deployment acceptance and remaining isolation caveats. **Do not dismiss
 a CodeQL finding merely because the runner's CLI appears locked down.**
+
+
+## HTTP access control (October 2026)
+
+The API defaults to actual loopback-client and Host checks, plus validation
+of browser Origin headers. Setting PATCHPILOT_API_TOKEN requires a strong
+bearer token on all routes with constant-time comparison. Weak configured
+secrets fail closed, rather than reverting to an unauthenticated server.
+The local frontend can send a token from a password input without storing it
+in localStorage. See [the HTTP access model](api-access-control.md).
+
+This is shared-secret local developer access, not an independent multi-user
+deployment security audit. Authenticate and privilege-separate repository
+workers and introduce proper resource quotas before public hosting.
