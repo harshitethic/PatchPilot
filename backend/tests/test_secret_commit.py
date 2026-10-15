@@ -1,0 +1,1 @@
+read_file is still running on kali after 3s. Do not retry the original tool call. Use get_tool_result with call_id="4880dc0e-e732-4f2a-a4c0-bcbe673390db" to check it later.
