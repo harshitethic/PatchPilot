@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from app.access_control import ApiAccessMiddleware
 from app.command_policy import parse_safe_command
-from app.commit_guard import staged_commit_risk
+from app.commit_guard import contains_secret_signature, is_sensitive_path, staged_commit_risk
 from app.sandbox import run_test_command
 
 APP_NAME = "PatchPilot"
@@ -271,7 +271,8 @@ def list_files(repo: Path, limit: int = 350) -> list[str]:
     ignored = {".git", "node_modules", ".venv", "venv", "dist", "build", "__pycache__", ".next", "coverage", ".cache"}
     results: list[str] = []
     for p in repo.rglob("*"):
-        if any(part in ignored for part in p.relative_to(repo).parts):
+        rel = p.relative_to(repo)
+        if any(part in ignored for part in rel.parts) or is_sensitive_path(rel.as_posix()):
             continue
         if p.is_symlink():
             continue
@@ -290,7 +291,7 @@ def read_repo_context(repo: Path, files: list[str], limit_chars: int = 65000) ->
     total = 0
     root = repo.resolve()
     for rel in ordered[:100]:
-        if Path(rel).is_absolute() or ".." in Path(rel).parts:
+        if Path(rel).is_absolute() or ".." in Path(rel).parts or is_sensitive_path(rel):
             continue
         path = repo / rel
         # Reject symlinks at any level, including symlinked parent directories.
@@ -299,8 +300,17 @@ def read_repo_context(repo: Path, files: list[str], limit_chars: int = 65000) ->
         if any(part.is_symlink() for part in path.parents if part != root and part.is_relative_to(root)):
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
+            # Limit bytes/characters read from attacker-controlled repository
+            # files instead of loading arbitrarily large files into memory.
+            if path.stat().st_size > 256_000:
+                continue
+            with path.open("r", encoding="utf-8", errors="ignore") as source:
+                text = source.read(7001)
         except OSError:
+            continue
+        # Skip entire source files with known signatures. Partial replacement
+        # could leave adjacent credential material in a remote LLM prompt.
+        if contains_secret_signature(text):
             continue
         if len(text) > 7000:
             text = text[:7000] + "\n...[truncated]"
@@ -337,7 +347,9 @@ async def ask_model(provider: str, model: str, system: str, user: str) -> str:
     async with httpx.AsyncClient(timeout=240) as client:
         response = await client.post(url, headers=headers, json=payload)
         if response.status_code >= 400:
-            raise HTTPException(502, f"Model request failed: {response.text[:1500]}")
+            # Provider error bodies can echo prompts, API keys and account
+            # metadata. Do not forward the raw remote response to API clients.
+            raise HTTPException(502, f"Model provider request failed (HTTP {response.status_code})")
         data = response.json()
     return data.get("message", {}).get("content") or data.get("choices", [{}])[0].get("message", {}).get("content", "")
 

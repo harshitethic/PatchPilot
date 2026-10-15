@@ -68,6 +68,7 @@ It is designed to sit **between an issue and a pull request** — with the devel
 - 🔍 Reviewable Git diffs
 - 🏠 Local-first LLM support with Ollama
 - 🔌 OpenAI/OpenRouter-compatible provider support
+- 🔒 Staged-secret commit refusal and bounded, credential-filtered model context
 - ⚡ FastAPI backend + lightweight web UI
 - 🐳 Local Docker sandbox for test execution (requires a separate local Docker daemon)
 
@@ -192,6 +193,14 @@ Add unit tests for the password validation edge cases.
 Use the planning stage as a fast first pass over an unfamiliar codebase before making the change yourself.
 
 ---
+
+### Repository context privacy
+
+Before an AI model receives source context, PatchPilot excludes sensitive
+filenames and recognized token-bearing files, bounds file reads, and avoids
+forwarding raw provider error responses. These guards are **not complete DLP**
+and do not replace consent before sending private source to OpenAI or
+OpenRouter. See the [reproducible privacy tests and limitations](docs/model-context-privacy.md).
 
 ## 🔌 API
 
