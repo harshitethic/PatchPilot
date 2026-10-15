@@ -1,0 +1,35 @@
+name: Browser UI regression
+
+on:
+  pull_request:
+    paths: ["frontend/**", "backend/browser_tests/**", ".github/workflows/browser-ui.yml"]
+  push:
+    branches: [main]
+    paths: ["frontend/**", "backend/browser_tests/**", ".github/workflows/browser-ui.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  chromium:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install browser test dependencies
+        run: |
+          python -m pip install "playwright==1.64.0"
+          python -m playwright install --with-deps chromium
+      - name: Verify actual frontend state in Chromium
+        run: python backend/browser_tests/run.py --output browser-evidence
+      - name: Retain browser recording and screenshot
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-evidence-${{ github.sha }}
+          path: browser-evidence/
+          if-no-files-found: warn
+          retention-days: 14

@@ -582,6 +582,11 @@ git commit -m "feat: your change"
 
 Please keep pull requests focused and explain the behavior you changed.
 
+The [Chromium regression walkthrough](docs/browser-verification.md) verifies
+result clearing during new requests, provider/network failures, partial rendering
+and literal rendering of HTML-like model text. CI retains actual browser recordings;
+the controlled HTTP fixture is explicitly separate from backend/AI/Docker verification.
+
 ---
 
 ## 📄 License
