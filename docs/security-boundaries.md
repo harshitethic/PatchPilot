@@ -9,13 +9,14 @@ trusted security principal.
 
 | Component | Trust assumption | Enforcement |
 |---|---|---|
-| User-managed backend | Trusted local developer | Backend binds to loopback, explicit CORS origins; **no public authentication** |
+| User-managed backend | Trusted local developer | Loopback client/Host checks, explicit origins, optional shared bearer token; no per-user authorization |
 | Git source URLs | Untrusted | HTTPS Github owner/repo validation and no SSH or arbitrary hosts |
 | Repository text | Untrusted | Symlink containment, bounded context, plan/edit validation |
 | Model-produced test commands | Untrusted | Strict parser; **Docker test runner only** |
 | Test container | Potentially hostile | No network, non-root, read-only source/root, resource caps, no host credentials/socket |
 | Host Git plumbing | Trusted backend, untrusted repository contents | Static Git executable, bounded Git commands, system/global config disabled, hooks/fsmonitor disabled, terminal prompt disabled |
 | Container image | Trusted by administrator | Static profile-based images, optional admin-configured OCI image, offline pull policy |
+| Model provider | Untrusted response, administrator-configured endpoint | Bounded request/response transfers, total deadline, no redirects/compression, sanitized errors; see [provider limits](model-provider-limits.md) |
 
 ## Git hook and configuration boundaries
 

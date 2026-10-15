@@ -64,18 +64,15 @@ class ModelContextSecretTests(unittest.TestCase):
 
     def test_provider_error_body_never_leaks_to_api(self):
         secret = "EXTERNAL_PROVIDER_RESPONSE_HAS_PRIVATE_DATA"
-        class FakeClient:
-            async def __aenter__(self):
-                return self
-            async def __aexit__(self, *_args):
-                return False
-            async def post(self, *_args, **_kwargs):
-                return httpx.Response(429, text=secret)
+        client_class = httpx.AsyncClient
+        transport = httpx.MockTransport(lambda _: httpx.Response(429, text=secret))
 
         async def request():
             return await ask_model("openai", "gpt-4o-mini", "system", "user")
 
-        with patch("app.main.httpx.AsyncClient", return_value=FakeClient()), patch.dict(
+        with patch("app.main.httpx.AsyncClient", side_effect=lambda **kw: client_class(
+            **kw, transport=transport
+        )), patch.dict(
             os.environ, {"OPENAI_API_KEY": "synthetic-test-key"}
         ):
             with self.assertRaises(HTTPException) as caught:
