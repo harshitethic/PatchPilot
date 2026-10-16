@@ -124,7 +124,7 @@ class SandboxPolicyTests(unittest.TestCase):
 
     def test_host_git_runner_blocks_test_tools_even_when_called_directly(self):
         from app.main import run
-        with patch("app.main.subprocess.run") as host:
+        with patch("app.main.run_git_process") as host:
             with tempfile.TemporaryDirectory() as temp:
                 for command in (["pytest", "-q"], ["python", "-m", "unittest"], ["git", "config", "--global", "user.name", "bad"]):
                     code, _ = run(command, Path(temp))

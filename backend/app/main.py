@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from app.access_control import ApiAccessMiddleware
 from app.command_policy import parse_safe_command
+from app.git_output import run_git_process
 from app.commit_guard import contains_secret_signature, is_sensitive_path, staged_commit_risk
 from app.model_transport import model_content, request_model_json
 from app.sandbox import run_test_command
@@ -176,25 +177,9 @@ def run(cmd: list[str], cwd: Path, timeout: int = 120) -> tuple[int, str]:
         "-c", "protocol.ext.allow=never",
         *cmd[1:],
     ]
-    try:
-        proc = subprocess.run(
-            git_argv,
-            cwd=cwd,
-            stdin=subprocess.DEVNULL,
-            shell=False,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            timeout=timeout,
-            check=False,
-            env=git_env,
-        )
-        return proc.returncode, proc.stdout
-    except subprocess.TimeoutExpired as exc:
-        output = exc.stdout or b""
-        if isinstance(output, bytes):
-            output = output.decode("utf-8", errors="replace")
-        return 124, output + "\n[command timed out]"
+    return run_git_process(
+        git_argv, cwd=cwd, env=git_env, timeout=timeout
+    )
 
 
 def save_private_test_log(repo: Path, output: str) -> None:
@@ -449,6 +434,8 @@ def apply_edits(repo: Path, payload: dict[str, Any]) -> tuple[bool, str]:
 
 def build_patch(repo: Path) -> str:
     code, output = run(["git", "diff", "--no-ext-diff", "--binary"], repo, 60)
+    if code == 122:
+        return "Diff omitted: Git output exceeded the safe preview limit. Review the local workspace."
     return output if code == 0 else ""
 
 

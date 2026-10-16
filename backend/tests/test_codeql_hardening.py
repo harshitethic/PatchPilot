@@ -103,20 +103,19 @@ class SecurityBoundaryTests(unittest.TestCase):
             self.assertEqual(clean.get("CI"), "1")
             for name in ("OPENAI_API_KEY", "GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "SSH_AUTH_SOCK"):
                 self.assertNotIn(name, clean)
-            with patch("app.main.subprocess.run") as called:
-                called.return_value = subprocess.CompletedProcess(["git"], 0, "ok")
+            with patch("app.main.run_git_process", return_value=(0, "ok")) as called:
                 rc, output = run(["git", "status", "--porcelain"], Path("."), 5)
                 self.assertEqual((rc, output), (0, "ok"))
                 self.assertNotIn("GITHUB_TOKEN", called.call_args.kwargs["env"])
                 self.assertNotIn("GIT_CONFIG_COUNT", called.call_args.kwargs["env"])
-                self.assertFalse(called.call_args.kwargs["shell"])
+                self.assertEqual(called.call_args.kwargs["timeout"], 5)
                 self.assertEqual(called.call_args.args[0][0:3], ["git", "-c", f"core.hooksPath={os.devnull}"])
                 self.assertEqual(called.call_args.kwargs["env"]["GIT_CONFIG_NOSYSTEM"], "1")
                 self.assertEqual(called.call_args.kwargs["env"]["GIT_CONFIG_GLOBAL"], os.devnull)
-                self.assertEqual(called.call_args.kwargs["stdin"], subprocess.DEVNULL)
+                self.assertEqual(called.call_args.kwargs["cwd"], Path("."))
 
     def test_generic_run_rejects_unknown_executable(self):
-        with patch("app.main.subprocess.run") as called:
+        with patch("app.main.run_git_process") as called:
             result = run(["bash", "-c", "echo unsafe"], Path("."))
             self.assertEqual(result[0], 126)
             called.assert_not_called()

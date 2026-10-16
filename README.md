@@ -602,3 +602,8 @@ PatchPilot is built and maintained by **HarshitEthic** as an open-source develop
 GitHub: **https://github.com/harshitethic**
 
 > Build tools developers actually want to use. Ship the source.
+
+
+## Bounded host Git output
+
+Host Git output is capped at 4 MiB and a [POSIX supervisor](docs/bounded-git-host-operations.md) cleans up processes on timeout; this is not a complete sandbox.
