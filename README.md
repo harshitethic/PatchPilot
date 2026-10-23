@@ -560,6 +560,8 @@ See [security boundaries and threat model](docs/security-boundaries.md) and
 
 PatchPilot is open source and contributions are welcome.
 
+[Contributor guide](CONTRIBUTING.md) — reproducible tests, security boundaries, and PR review expectations.
+
 Good places to start:
 
 - improve repository analysis
