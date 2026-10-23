@@ -32,7 +32,7 @@ Describe what actually happened. Attach sanitized terminal output/screenshots if
 
 - [ ] I reproduced this myself from a clean checkout or a stated baseline.
 - [ ] I used synthetic/non-confidential data and removed secrets from logs.
-- [ ] I checked [independent evaluation guidance](../../docs/independent-evaluation.md) and existing issues.
+- [ ] I checked [independent evaluation guidance](https://github.com/harshitethic/PatchPilot/blob/main/docs/independent-evaluation.md) and existing issues.
 
 ## Additional context and limitations
 
