@@ -8,6 +8,8 @@ PatchPilot is a local-first developer tool for giving an AI agent a real Git rep
 
 It is designed to sit **between an issue and a pull request** — with the developer kept in control of the final change.
 
+**Review before trusting the agent:** [Independent security, isolation and UX evaluation](docs/independent-evaluation.md) · [Report a reproducible defect](https://github.com/harshitethic/PatchPilot/issues/new/choose). Local preview only; use disposable repositories and do not expose the API publicly.
+
 ---
 
 ## ✨ What PatchPilot does
