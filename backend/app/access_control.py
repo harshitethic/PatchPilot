@@ -61,6 +61,11 @@ class ApiAccessMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS" and "access-control-request-method" in request.headers:
             return await call_next(request)
 
+        # Duplicate Host headers are ambiguous across proxies and ASGI servers.
+        # Do not let a different hop authorize a different authority.
+        if len(request.headers.getlist("host")) != 1:
+            return JSONResponse({"detail": "Exactly one Host header is required"}, status_code=400)
+
         origin = request.headers.get("origin")
         if origin is not None and origin not in self.allowed_origins():
             return JSONResponse({"detail": "Untrusted browser origin"}, status_code=403)
