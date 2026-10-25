@@ -143,6 +143,16 @@ class AccessHttpTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(blocked.status_code, 403)
 
+    async def test_duplicate_host_headers_rejected_in_local_and_token_modes(self):
+        for env in ({}, {"PATCHPILOT_API_TOKEN": TOKEN}):
+            with self.subTest(token_enabled=bool(env)):
+                headers = [("Host", "localhost"), ("Host", "malicious.example")]
+                if env:
+                    headers.append(("Authorization", "Bearer " + TOKEN))
+                response = await self.request(headers=headers, env=env)
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("Host header", response.text)
+
     async def test_duplicate_auth_headers_refused(self):
         token = TOKEN
         response = await self.request(
