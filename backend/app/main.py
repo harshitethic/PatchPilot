@@ -238,7 +238,7 @@ def safe_branch_name(name: str) -> str:
     # even though these look safe to a basic character whitelist.
     parts = []
     for part in value.split("/"):
-        part = re.sub(r"\\.{2,}", "-", part).strip(".-")
+        part = re.sub(r"[.]{2,}", "-", part).strip(".-")
         if part.endswith(".lock"):
             part = part[:-5] + "-lock"
         if part:
