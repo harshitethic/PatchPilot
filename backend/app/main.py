@@ -401,14 +401,24 @@ def apply_edits(repo: Path, payload: dict[str, Any]) -> tuple[bool, str]:
         new = edit.get("new")
         if not isinstance(rel, str) or not rel.strip():
             return False, f"Edit {i+1} has invalid path"
-        path = (repo / rel).resolve()
+        candidate = repo / rel
+        # A symlink inside the workspace can point at protected in-repo files
+        # (for example .git/config), so merely checking the resolved path for
+        # directory escape is not enough. Reject links at any path component.
+        root = repo.resolve()
+        if any(
+            entry.is_symlink()
+            for entry in (candidate, *candidate.parents)
+            if entry != repo and entry.is_relative_to(repo)
+        ):
+            return False, f"Edit {i+1} targets a symlinked path: {rel}"
+        path = candidate.resolve()
         try:
-            path.relative_to(repo.resolve())
+            resolved_parts = path.relative_to(root).parts
         except ValueError:
             return False, f"Edit {i+1} escapes repository: {rel}"
-        # Git control files are not tracked source and must never be edited by
-        # model-generated patches, even if the model guesses their contents.
-        if ".git" in (part.lower() for part in Path(rel).parts):
+        # Check the canonical target as well as the submitted path.
+        if ".git" in (part.lower() for part in (*Path(rel).parts, *resolved_parts)):
             return False, "Agent cannot modify Git control files"
         if path.name == ".patchpilot.patch":
             return False, "Agent cannot modify PatchPilot control files"
