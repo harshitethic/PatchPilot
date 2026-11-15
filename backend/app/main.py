@@ -233,9 +233,20 @@ def safe_repo_name(url: str) -> str:
 
 
 def safe_branch_name(name: str) -> str:
-    value = re.sub(r"[^a-zA-Z0-9._/-]+", "-", name.strip()).strip("/-." )
-    value = re.sub(r"/{2,}", "/", value)
-    return value[:80] or "patchpilot/task"
+    value = re.sub(r"[^a-zA-Z0-9._/-]+", "-", name.strip())
+    # Git forbids '..', leading dot components and '.lock' path suffixes,
+    # even though these look safe to a basic character whitelist.
+    parts = []
+    for part in value.split("/"):
+        part = re.sub(r"[.]{2,}", "-", part).strip(".-")
+        if part.endswith(".lock"):
+            part = part[:-5] + "-lock"
+        if part:
+            parts.append(part)
+    branch = "/".join(parts)[:80].rstrip("/-.")
+    if branch.endswith(".lock"):
+        branch = branch[:-5] + "-lock"
+    return branch or "patchpilot/task"
 
 
 def clone_repo(repo_url: str) -> tuple[str, Path]:
